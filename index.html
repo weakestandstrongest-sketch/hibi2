@@ -148,6 +148,9 @@ svg{display:block}
 .li.on .box{background:var(--c)}
 .li:not(.on) .box .ico{display:none}
 .lbl{font-size:12px;font-weight:700;color:var(--ink-2);margin:16px 4px 6px}
+.tg{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;font-size:14.5px;font-weight:600}
+.tg small{display:block;font-size:12px;font-weight:400;color:var(--ink-2);margin-top:2px}
+.tg input{flex:none;width:22px;height:22px;accent-color:var(--accent)}
 .fld input{width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--line);background:var(--surface)}
 
 .rt-sum{background:var(--surface);border-radius:22px;box-shadow:var(--shadow);padding:16px 18px;margin-bottom:12px}
@@ -175,12 +178,45 @@ svg{display:block}
 .rt-steps summary{cursor:pointer;color:var(--accent);font-weight:700;font-size:12.5px}
 .rt-steps details ul{list-style:none;padding:0;margin:4px 0 0}
 .rt-steps details li{display:flex;gap:10px;font-size:12.5px;padding:2px 0}
+/* launch animation: the icon's sunrise plays on the blue, then the app shows (like ひび手帳's "h") */
+#splash{position:fixed;inset:0;z-index:200;display:grid;place-items:center;background:#4F8ED6;transition:opacity .45s ease,transform .5s cubic-bezier(.3,.8,.3,1)}
+#splash svg{width:min(60vw,270px);height:auto;overflow:visible}
+#splash.out{opacity:0;transform:scale(1.08);pointer-events:none}
+.sp-cr{stroke:#FFF4EE;stroke-width:20;stroke-linecap:round;fill:none}
+.sp-hz{transform-box:fill-box;transform-origin:center;transform:scaleX(0);animation:spGrow .5s cubic-bezier(.5,0,.2,1) .1s forwards}
+.sp-sun{fill:#FFF4EE;transform:translateY(130px);animation:spRise .7s cubic-bezier(.2,.8,.25,1) .3s forwards}
+.sp-ray{stroke-dasharray:1;stroke-dashoffset:1;animation:spDraw .28s ease-out forwards}
+.sp-low{opacity:.55;transform-box:fill-box;transform-origin:left;transform:scaleX(0);animation:spGrow .35s cubic-bezier(.5,0,.2,1) 1.08s forwards}
+.sp-dot{fill:#232A5C;transform-box:fill-box;transform-origin:center;transform:scale(0);animation:spDot .45s cubic-bezier(.3,1.7,.5,1) 1.3s forwards}
+@keyframes spGrow{to{transform:scaleX(1)}}
+@keyframes spRise{to{transform:none}}
+@keyframes spDraw{to{stroke-dashoffset:0}}
+@keyframes spDot{to{transform:scale(1)}}
+@media (prefers-reduced-motion:reduce){.sp-hz,.sp-sun,.sp-low,.sp-dot{animation:none;transform:none}.sp-ray{animation:none;stroke-dashoffset:0}#splash{transition:opacity .3s}#splash.out{transform:none}}
 #toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 24px);z-index:20;transform:translate(-50%,20px);opacity:0;pointer-events:none;
   max-width:calc(100% - 32px);padding:10px 16px;border-radius:14px;background:var(--ink);color:var(--bg);font-size:13.5px;transition:opacity .25s,transform .25s}
 #toast.show{opacity:1;transform:translate(-50%,0)}
 </style>
 </head>
 <body>
+<div id="splash" aria-hidden="true"><svg viewBox="80 110 352 320">
+  <defs><clipPath id="sp-c"><rect x="0" y="0" width="512" height="288"/></clipPath></defs>
+  <g clip-path="url(#sp-c)"><circle class="sp-sun" cx="256" cy="288" r="112"/></g>
+  <g class="sp-cr"><line class="sp-ray" style="animation-delay:0.82s" pathLength="1" x1="256.0" y1="142.0" x2="256.0" y2="106.0"/><line class="sp-ray" style="animation-delay:0.9s" pathLength="1" x1="345.9" y1="173.0" x2="368.1" y2="144.6"/><line class="sp-ray" style="animation-delay:0.9s" pathLength="1" x1="166.1" y1="173.0" x2="143.9" y2="144.6"/><line class="sp-ray" style="animation-delay:0.98s" pathLength="1" x1="396.3" y1="247.8" x2="430.9" y2="237.8"/><line class="sp-ray" style="animation-delay:0.98s" pathLength="1" x1="115.7" y1="247.8" x2="81.1" y2="237.8"/></g>
+  <line class="sp-cr sp-hz" x1="96" y1="320" x2="416" y2="320"/>
+  <line class="sp-cr sp-low" x1="176" y1="368" x2="336" y2="368"/>
+  <circle class="sp-dot" cx="394" cy="368" r="22"/>
+</svg></div>
+<script>
+(function () {
+  var el = document.getElementById('splash'), off = false;
+  try { off = localStorage.getItem('kyou.splash') === 'off'; } catch (e) {}
+  if (off || (navigator.webdriver && !/[?&]splash\b/.test(location.search))) { el.remove(); return; }
+  // a Home Screen app starts below the status bar: lift the animation so it sits in the middle of the whole screen
+  var sa = navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches), gap = screen.height - window.innerHeight;
+  if (sa && gap > 0 && gap < 120) el.style.paddingBottom = gap + 'px';
+})();
+</script>
 <div id="app"></div>
 <div id="toast" role="status"></div>
 <script>
@@ -626,6 +662,8 @@ function settingsHTML() {
     <p class="lbl">乗換案内のURL（ログインに使います）</p>
     <div class="fld"><input id="set-base" type="url" value="${esc(gd.base || norikaeBase())}" autocapitalize="off" spellcheck="false" placeholder="${DEF_NORIKAE}"></div>
     <p class="note" style="margin:6px 4px 0">ひび手帳の 設定 → 乗換案内 と同じURLにしてください。</p>
+    <p class="lbl">表示</p>
+    <label class="card tg"><span>起動時のアニメーション<small>開いたとき、アイコンの日の出を描きます（タップで飛ばせます）</small></span><input type="checkbox" id="set-splash" ${splashOn() ? 'checked' : ''}></label>
     <p class="note" style="margin:16px 4px 0">この画面は、ひび手帳が Google ドライブに保存したデータを読むだけです。予定の追加・変更・日記・月の表示はひび手帳で。</p>`;
 }
 
@@ -643,7 +681,9 @@ const ACT = {
   },
 };
 document.addEventListener('click', e => { const t = e.target.closest('[data-act]'); if (t && ACT[t.dataset.act]) ACT[t.dataset.act](t); });
+const splashOn = () => { try { return localStorage.getItem('kyou.splash') !== 'off'; } catch (e) { return true; } };
 document.addEventListener('change', e => {
+  if (e.target.id === 'set-splash') { try { if (e.target.checked) localStorage.removeItem('kyou.splash'); else localStorage.setItem('kyou.splash', 'off'); } catch (err) {} return; }
   if (e.target.id !== 'set-base') return;
   const v = e.target.value.trim(); gdPut({ base: v && v !== DEF_NORIKAE ? v : '', at: '', exp: 0 }); toast('保存しました');
 });
@@ -658,6 +698,8 @@ function applyTheme() {
 }
 
 /* ================= start ================= */
+function endSplash() { const el = $('#splash'); if (!el || el.classList.contains('out')) return; el.classList.add('out'); setTimeout(() => el.remove(), 520); }
+if ($('#splash')) { const quick = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches; setTimeout(endSplash, quick ? 700 : 1950); $('#splash').addEventListener('click', endSplash); }
 gdFromHash(); applyTheme(); render(); load();
 // keep the now line moving, and pick up a new day after midnight
 let lastDay = todayISO();
