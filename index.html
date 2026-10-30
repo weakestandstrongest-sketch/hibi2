@@ -75,17 +75,20 @@ svg{display:block}
 /* timeline */
 .tl{position:relative}
 .row{position:relative;display:grid;grid-template-columns:52px 64px minmax(0,1fr);align-items:center;column-gap:6px;padding:0}
-.row .t{align-self:start;padding:12px 4px 0 0;text-align:right;font-size:12px;font-weight:600;color:var(--ink-2);line-height:1.25}
+.row .t{align-self:start;padding:10px 4px 0 0;text-align:right;font-size:12px;font-weight:600;color:var(--ink-2);line-height:1.25}
 .row .t small{display:block;font-size:11px;font-weight:500;color:var(--ink-3)}
 .rail{position:relative;align-self:stretch;display:flex;justify-content:center;align-items:flex-start}
 /* the line joining the items: each item's own color, fading into the next one's between them */
-.rail::before{content:"";position:absolute;left:50%;top:0;bottom:0;width:4px;margin-left:-2px;border-radius:2px;
+/* drawn only between the pills (free time, the now line, or a short link), stopping a little short of each pill;
+   the dashes are stretched to fit so none is cut off at either end */
+.rail::before{content:"";position:absolute;left:50%;top:2px;bottom:2px;width:4px;margin-left:-2px;
   background:linear-gradient(to bottom,var(--cp,var(--c)),var(--cn,var(--c)));
-  -webkit-mask:repeating-linear-gradient(to bottom,#000 0 5px,transparent 5px 10px);mask:repeating-linear-gradient(to bottom,#000 0 5px,transparent 5px 10px)}
+  -webkit-mask:linear-gradient(#000 0 7px,transparent 7px 12px) center top/4px 12px round;mask:linear-gradient(#000 0 7px,transparent 7px 12px) center top/4px 12px round}
+.row.it .rail::before{display:none}
 .tl>.row:first-child .rail::before{top:50%}
 .tl>.row:last-child .rail::before{bottom:50%}
-.row.link{padding:0;min-height:14px}
-.row.it .rail{padding:6px 0}
+.row.link{padding:0;min-height:22px}
+.row.it .rail{padding:4px 0}
 .pill{position:relative;z-index:1;width:58px;border-radius:29px;background:var(--c);color:#fff;display:grid;place-items:center;overflow:hidden;
   box-shadow:0 3px 10px color-mix(in srgb,var(--c) 35%,transparent)}
 .pill .ico{position:relative;z-index:1;width:26px;height:26px;stroke-width:2}
@@ -215,6 +218,9 @@ svg{display:block}
   // a Home Screen app starts below the status bar: lift the animation so it sits in the middle of the whole screen
   var sa = navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches), gap = screen.height - window.innerHeight;
   if (sa && gap > 0 && gap < 120) el.style.paddingBottom = gap + 'px';
+  // the strips above and below the page (status bar, home bar) show the page's own color: make them blue while it plays
+  document.documentElement.style.background = document.body.style.background = '#4F8ED6';
+  var mt = document.querySelector('meta[name="theme-color"]'); if (mt) mt.setAttribute('content', '#4F8ED6');
 })();
 </script>
 <div id="app"></div>
@@ -694,11 +700,15 @@ function toast(m) { const el = $('#toast'); el.textContent = m; el.classList.add
 function applyTheme() {
   const s = S ? S.settings : {}, r = document.documentElement;
   if (s.theme === 'light' || s.theme === 'dark') r.dataset.theme = s.theme; else delete r.dataset.theme;
-  const m = $('meta[name="theme-color"]'); if (m) m.content = getComputedStyle(document.body).getPropertyValue('--bg').trim() || '#F5EFEB';
+  const sp = $('#splash'), m = $('meta[name="theme-color"]'); if (m && !(sp && !sp.classList.contains('out'))) m.content = getComputedStyle(document.body).getPropertyValue('--bg').trim() || '#F5EFEB';
 }
 
 /* ================= start ================= */
-function endSplash() { const el = $('#splash'); if (!el || el.classList.contains('out')) return; el.classList.add('out'); setTimeout(() => el.remove(), 520); }
+function endSplash() {
+  const el = $('#splash'); if (!el || el.classList.contains('out')) return; el.classList.add('out');
+  document.documentElement.style.background = document.body.style.background = ''; applyTheme(); // back to the app's own color
+  setTimeout(() => el.remove(), 520);
+}
 if ($('#splash')) { const quick = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches; setTimeout(endSplash, quick ? 700 : 1950); $('#splash').addEventListener('click', endSplash); }
 gdFromHash(); applyTheme(); render(); load();
 // keep the now line moving, and pick up a new day after midnight
