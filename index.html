@@ -1,0 +1,635 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="きょう">
+<meta name="theme-color" content="#F5EFEB">
+<meta name="description" content="ひび手帳のタイムラインの「今日」だけを表示します">
+<title>きょう｜ひび手帳</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap">
+<style>
+/* ひび手帳と同じ色。Structured のように、色つきのカプセルを縦の線でつないで1日を並べる */
+:root{
+  --bg:#F5EFEB; --surface:#FFFFFF; --surface-2:#FAF6F3; --ink:#232A5C; --ink-2:#6D7092; --ink-3:#A9AABD;
+  --line:#E2D9D2; --accent:#E07F78; --sun:#D45850; --overlay:rgba(24,26,48,.32); --shadow:0 6px 22px rgba(35,42,92,.08);
+  --f-body:ui-rounded,"SF Pro Rounded","Hiragino Sans","Zen Maru Gothic","Noto Sans JP",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141414; --surface:#252526; --surface-2:#1C1C1D; --ink:#F2F1F4; --ink-2:#A3A3AD; --ink-3:#66666F;
+    --line:#3A3A3F; --accent:#EF8A82; --sun:#F07D74; --overlay:rgba(0,0,0,.6); --shadow:none; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#141414; --surface:#252526; --surface-2:#1C1C1D; --ink:#F2F1F4; --ink-2:#A3A3AD; --ink-3:#66666F;
+  --line:#3A3A3F; --accent:#EF8A82; --sun:#F07D74; --overlay:rgba(0,0,0,.6); --shadow:none; color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{height:100%;background:var(--bg)}
+body{min-height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.5;
+  -webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%}
+[hidden]{display:none!important}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-align:inherit}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+input{font:inherit;font-size:16px;color:var(--ink)}
+svg{display:block}
+.ico{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.num{font-variant-numeric:tabular-nums}
+@media (hover:none){button:not(:disabled):active{opacity:.55}}
+
+#app{max-width:560px;margin:0 auto;padding:calc(env(safe-area-inset-top,0px) + 14px) 16px calc(env(safe-area-inset-bottom,0px) + 40px)}
+
+/* header */
+.hd{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:6px}
+.hd .d{font-size:14px;font-weight:700;color:var(--accent);letter-spacing:.02em}
+.hd h1{margin:0;font-size:34px;line-height:1.15;font-weight:800;letter-spacing:.01em}
+.hd .hol{display:inline-block;margin-left:8px;font-size:12px;font-weight:700;color:var(--sun);vertical-align:3px}
+.hd-btns{display:flex;gap:2px;margin-top:4px}
+.icon-btn{width:40px;height:40px;display:grid;place-items:center;border-radius:12px;color:var(--ink-2)}
+.icon-btn.spin .ico{animation:spin .9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.sum{display:flex;align-items:center;gap:12px;margin:10px 0 16px;padding:12px 14px;background:var(--surface);border-radius:16px;box-shadow:var(--shadow)}
+.ring{flex:none;width:44px;height:44px}
+.ring circle{fill:none;stroke-width:5}
+.ring .bgc{stroke:var(--line)} .ring .fg{stroke:var(--accent);stroke-linecap:round;transition:stroke-dashoffset .5s}
+.sum b{display:block;font-size:15px}
+.sum small{display:block;font-size:12.5px;color:var(--ink-2)}
+
+/* all-day chips */
+.ad{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px}
+.chip{display:flex;align-items:center;gap:7px;max-width:100%;padding:5px 12px 5px 5px;border-radius:999px;background:var(--surface);box-shadow:var(--shadow);font-size:13.5px;font-weight:600}
+.chip .c{flex:none;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--c);color:#fff}
+.chip .c .ico{width:15px;height:15px;stroke-width:2.1}
+.chip span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip.over{color:var(--sun)}
+
+/* timeline */
+.tl{position:relative}
+.row{position:relative;display:grid;grid-template-columns:44px 56px minmax(0,1fr) 34px;align-items:center;column-gap:8px;padding:5px 0}
+.row .t{align-self:start;padding-top:7px;text-align:right;font-size:12.5px;font-weight:600;color:var(--ink-2);line-height:1.25}
+.row .t small{display:block;font-size:11px;font-weight:500;color:var(--ink-3)}
+.rail{position:relative;align-self:stretch;display:flex;justify-content:center;align-items:flex-start}
+.rail::before{content:"";position:absolute;left:50%;top:-5px;bottom:-5px;width:0;border-left:2.5px dotted var(--line);transform:translateX(-50%)}
+.tl>.row:first-child .rail::before{top:50%}
+.tl>.row:last-child .rail::before{bottom:50%}
+.pill{position:relative;z-index:1;width:46px;border-radius:23px;background:var(--c);color:#fff;display:grid;place-items:center;overflow:hidden;
+  box-shadow:0 3px 10px color-mix(in srgb,var(--c) 35%,transparent)}
+.pill .ico{position:relative;z-index:1;width:22px;height:22px;stroke-width:2}
+/* now inside this item: the part still to come is paler */
+.pill .rest{position:absolute;left:0;right:0;bottom:0;background:rgba(255,255,255,.5)}
+.row.past .pill{opacity:.55}
+.row.cancel .pill{background:var(--surface);color:var(--ink-3);box-shadow:inset 0 0 0 2px var(--line)}
+.body{display:block;min-width:0;padding:4px 0}
+.body .m{display:block;font-size:12.5px;color:var(--ink-2)}
+.body .tt{display:block;font-size:16px;font-weight:700;line-height:1.35;overflow-wrap:anywhere}
+.row.done .tt{text-decoration:line-through;text-decoration-thickness:1.5px;color:var(--ink-3)}
+.row.cancel .tt{text-decoration:line-through;color:var(--ink-3)}
+.tag{display:inline-block;margin-left:6px;padding:0 7px;border-radius:999px;font-size:11px;font-weight:700;vertical-align:2px;background:var(--surface-2);color:var(--ink-2)}
+.tag.now{background:var(--accent);color:#fff}
+.chk{width:28px;height:28px;border-radius:50%;border:2px solid var(--c);display:grid;place-items:center;color:#fff;justify-self:end;opacity:.9}
+.chk .ico{width:16px;height:16px;stroke-width:2.6}
+.chk.on{background:var(--c)}
+.chk:not(.on) .ico{display:none}
+/* free time between items */
+.row.gap{padding:2px 0}
+.row.gap .rail::before{border-left-style:dashed;opacity:.8}
+.row.gap .body{font-size:12.5px;color:var(--ink-3);padding:10px 0}
+/* the now line */
+.row.now{padding:0}
+.row.now .t{padding-top:0;align-self:center;color:var(--accent);font-weight:700}
+.row.now .rail::before{display:none}
+.row.now .dot{position:relative;z-index:1;width:12px;height:12px;border-radius:50%;background:var(--accent);margin:auto;box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent)}
+.row.now .rail{align-items:center}
+.row.now .ln{grid-column:3/5;height:2px;border-radius:1px;background:var(--accent)}
+.empty{text-align:center;color:var(--ink-2);padding:44px 12px;line-height:1.8}
+.empty .ico{width:40px;height:40px;margin:0 auto 10px;color:var(--ink-3)}
+.foot{margin-top:22px;text-align:center;font-size:12px;color:var(--ink-3)}
+.foot.err{color:var(--sun)}
+
+/* first screen (not connected yet) */
+.hello{padding:30px 6px;text-align:center}
+.hello .logo{width:84px;height:84px;border-radius:22px;margin:10px auto 18px;box-shadow:var(--shadow)}
+.hello h2{margin:0 0 8px;font-size:22px}
+.hello p{margin:0 0 20px;color:var(--ink-2);font-size:14px;line-height:1.8}
+.btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:14px;border-radius:14px;font-weight:700;background:var(--surface);box-shadow:var(--shadow);margin-top:10px}
+.btn.primary{background:var(--accent);color:#fff}
+.btn.ghost{background:none;box-shadow:inset 0 0 0 1.5px var(--line);color:var(--ink-2)}
+.note{font-size:12.5px;color:var(--ink-2);line-height:1.7;text-align:left}
+
+/* bottom sheet */
+.ov{position:fixed;inset:0;z-index:10;background:var(--overlay);opacity:0;transition:opacity .25s}
+.ov.show{opacity:1}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:11;max-width:560px;margin:0 auto;max-height:86vh;overflow-y:auto;background:var(--bg);
+  border-radius:22px 22px 0 0;padding:0 0 calc(env(safe-area-inset-bottom,0px) + 22px);transform:translateY(100%);transition:transform .32s cubic-bezier(.2,.9,.25,1)}
+.sheet.show{transform:none}
+.sh-bar{display:flex;justify-content:flex-end;padding:12px 14px 0}
+.sh-bar button{font-weight:700;color:var(--accent);padding:4px 6px}
+.sh-in{padding:0 18px}
+.dt-head{display:flex;align-items:center;gap:14px;margin:4px 0 18px}
+.dt-head .pill{width:56px;height:56px;border-radius:28px;flex:none}
+.dt-head .pill .ico{width:26px;height:26px}
+.dt-head b{display:block;font-size:20px;line-height:1.35;overflow-wrap:anywhere}
+.dt-head small{display:block;color:var(--ink-2);font-size:13.5px}
+.card{background:var(--surface);border-radius:16px;box-shadow:var(--shadow);padding:4px 14px;margin-bottom:12px}
+.li{display:flex;align-items:flex-start;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);font-size:14.5px}
+.li:last-child{border-bottom:0}
+.li>.ico{flex:none;width:20px;height:20px;color:var(--ink-2);margin-top:1px}
+.li span{min-width:0;white-space:pre-wrap;overflow-wrap:anywhere}
+.li.on{color:var(--ink-3);text-decoration:line-through}
+.li .box{flex:none;width:20px;height:20px;border-radius:6px;border:2px solid var(--c);display:grid;place-items:center;color:#fff;margin-top:1px}
+.li .box .ico{width:13px;height:13px;stroke-width:3}
+.li.on .box{background:var(--c)}
+.li:not(.on) .box .ico{display:none}
+.lbl{font-size:12px;font-weight:700;color:var(--ink-2);margin:16px 4px 6px}
+.fld input{width:100%;padding:12px 14px;border-radius:12px;border:1.5px solid var(--line);background:var(--surface)}
+
+#toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 24px);z-index:20;transform:translate(-50%,20px);opacity:0;pointer-events:none;
+  max-width:calc(100% - 32px);padding:10px 16px;border-radius:14px;background:var(--ink);color:var(--bg);font-size:13.5px;transition:opacity .25s,transform .25s}
+#toast.show{opacity:1;transform:translate(-50%,0)}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="toast" role="status"></div>
+<script>
+(() => {
+'use strict';
+/* ================= きょう：ひび手帳のタイムラインの「今日」だけ =================
+   データはひび手帳が Google ドライブ（アプリ専用の場所）に自動保存している hibi.json を読むだけ。
+   ここからは何も書き込まない（月表示・日記・編集はひび手帳で）。
+   ログインはひび手帳と同じ、乗換案内の Worker（/hibi-auth/）を通す。 */
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pad = n => String(n).padStart(2, '0');
+const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const P = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+const addDays = (s, n) => { const d = P(s); d.setDate(d.getDate() + n); return iso(d); };
+const diffDays = (a, b) => Math.round((P(b) - P(a)) / 864e5);
+const todayISO = () => iso(new Date());
+const nowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
+const WD = ['日', '月', '火', '水', '木', '金', '土'];
+const wd = s => P(s).getDay();
+const hhmm = m => `${pad(Math.floor(m / 60) % 24)}:${pad(m % 60)}`;
+const toMin = t => { const [h, m] = String(t || '0:0').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
+const hm = t => String(t || '').replace(/^0(\d)/, '$1');
+const hmM = m => hm(hhmm(m));
+const dur = m => m >= 60 ? `${Math.floor(m / 60)}時間${m % 60 ? (m % 60) + '分' : ''}` : `${m}分`;
+const md = s => { const d = P(s); return `${d.getMonth() + 1}/${d.getDate()}`; };
+const evLen = ev => { const x = toMin(ev.end) - toMin(ev.start); return x > 0 ? x : x + 1440; };
+const multiDay = ev => !ev.allDay && !!ev.endDate && ev.endDate > ev.date;
+const overnight = ev => !ev.allDay && !multiDay(ev) && toMin(ev.end) <= toMin(ev.start);
+const evSpan = ev => ev.endDate && ev.endDate > ev.date && (ev.allDay || ev.calOnly) ? diffDays(ev.date, ev.endDate) : 0;
+const okColor = c => typeof c === 'string' && (/^#[0-9a-f]{3,8}$/i.test(c) || /^rgba?\([\d.,\s%]+\)$/i.test(c));
+const COLORS = ['#E07F78','#E9A23B','#6B88B0','#86B067','#9B4F6E','#4FA39B','#A68BD2','#8E8E96'];
+const col = c => okColor(c) ? c : COLORS[2];
+const SCH_C = '#5B8FC9', TODO_C = '#E07F78';
+const ACCENTS = { blue: '#4F8ED6', green: '#4E9F72', purple: '#8C78D4', orange: '#DE8E2A', pink: '#D8628E' };
+
+/* ================= icons（ひび手帳と同じ） ================= */
+const IC = {
+  alarm:'<circle cx="12" cy="13" r="7"/><path d="M12 10v3l2 2M5 4 2.5 6.5M19 4l2.5 2.5"/>',
+  sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon:'<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
+  cup:'<path d="M4 9h12v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5zM16 10h1.5a2.5 2.5 0 0 1 0 5H16M8 3v3M12 3v3"/>',
+  bolt:'<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
+  book:'<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2zM4 21V5M8 7h7"/>',
+  work:'<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M3 13h18"/>',
+  gym:'<path d="M6 7v10M18 7v10M3 10v4M21 10v4M6 12h12"/>',
+  food:'<path d="M7 3v8M5 3v5a2 2 0 0 0 4 0V3M7 11v10M17 3c-2 0-3 2-3 5s1 4 3 4v9"/>',
+  heart:'<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/>',
+  cart:'<path d="M3 4h2l2.4 11h10.2L20 8H6.2"/><circle cx="9" cy="19" r="1.5"/><circle cx="17" cy="19" r="1.5"/>',
+  music:'<path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>',
+  leaf:'<path d="M5 19c0-9 6-14 15-14 0 9-5 15-14 15M5 19l7-7"/>',
+  cake:'<path d="M4 21h16v-8H4zM4 16c2 1.5 4 1.5 6 0s4-1.5 6 0 3 1.5 4 0M12 13V9M12 6.5V5"/>',
+  train:'<rect x="5" y="3" width="14" height="14" rx="3"/><path d="M5 11h14M8 21l2-4M16 21l-2-4"/>',
+  pen:'<path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/>',
+  people:'<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 5a3 3 0 0 1 0 6M18 20a5 5 0 0 0-3-4.6"/>',
+  star:'<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
+  // UI
+  search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
+  today:'<rect x="3" y="4" width="18" height="17" rx="3"/><path d="M3 9h18M8 2v4M16 2v4"/><circle cx="8" cy="13.5" r=".6"/><circle cx="12" cy="13.5" r=".6"/><circle cx="16" cy="13.5" r=".6"/><circle cx="8" cy="17" r=".6"/><circle cx="12" cy="17" r=".6"/>',
+  gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  check:'<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  left:'<path d="m15 18-6-6 6-6"/>',
+  right:'<path d="m9 18 6-6-6-6"/>',
+  camera:'<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
+  cal:'<rect x="3" y="4" width="18" height="17" rx="3"/><path d="M3 9h18M8 2v4M16 2v4"/>',
+  list:'<circle cx="5" cy="6" r="1.6"/><circle cx="5" cy="12" r="1.6"/><circle cx="5" cy="18" r="1.6"/><path d="M10 6h10M10 12h10M10 18h7"/>',
+  journal:'<path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11M9 8h6"/>',
+  wave:'<path d="M3 12h2M7 8v8M11 5v14M15 9v6M19 7v10M21 12h0"/>',
+  school:'<path d="M2 9.5 12 5l10 4.5L12 14z"/><path d="M6 11.5V16c0 1.4 2.7 3 6 3s6-1.6 6-3v-4.5M22 9.5V15"/>',
+  play:'<path d="M7 5v14l12-7z"/>',
+  mail:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
+  tv:'<rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  home:'<path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10M10 20v-6h4v6"/>',
+  shirt:'<path d="M8 4 4 7l2 4 2-1v10h8V10l2 1 2-4-4-3c-.5 1.5-2 2.5-4 2.5S8.5 5.5 8 4z"/>',
+  phone:'<rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18h2"/>',
+  bath:'<path d="M3 12h18v3a5 5 0 0 1-5 5H8a5 5 0 0 1-5-5zM6 12V6a2 2 0 0 1 4 0M7 20l-1 2M17 20l1 2"/>',
+  bag:'<path d="M5 8h14l-1 13H6zM9 8V6a3 3 0 0 1 6 0v2"/>',
+  palette:'<path d="M12 3a9 9 0 1 0 0 18c1.2 0 2-.8 2-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.8-.5-1.2 0-1 .8-1.8 1.8-1.8H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8z"/><circle cx="7.5" cy="11" r="1.1"/><circle cx="10" cy="7.5" r="1.1"/><circle cx="14.5" cy="7.5" r="1.1"/>',
+  timer:'<circle cx="12" cy="13" r="8"/><path d="M12 13 9 9.5M9 2h6"/>',
+  flip:'<path d="M4 9a8 8 0 0 1 14.3-3.3L20 8M20 4v4h-4M20 15a8 8 0 0 1-14.3 3.3L4 16M4 20v-4h4"/>',
+  grid:'<path d="M4 4h16v16H4zM9.3 4v16M14.7 4v16M4 9.3h16M4 14.7h16"/>',
+  down:'<path d="m6 9 6 6 6-6"/>',
+  up:'<path d="m18 15-6-6-6 6"/>',
+  more:'<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>',
+  repeat:'<path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12"/><path d="M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  pause:'<path d="M8.5 5v14M15.5 5v14"/>',
+  trash:'<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  yen:'<path d="M6 4l6 8 6-8M12 12v8M7 13h10M7 17h10"/>',
+  inbox:'<path d="M3 13h5l1.5 3h5l1.5-3h5"/><path d="M5.5 5h13L21 13v6H3v-6z"/>',
+  x:'<path d="M6 6l12 12M18 6 6 18"/>',
+  umbrella:'<path d="M3 12a9 9 0 0 1 18 0zM12 12v7a2 2 0 0 0 4 0M12 3v-1"/>',
+  target:'<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
+  lock:'<rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14.5v2.5"/>',
+  face:'<path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M9 9v1.5M15 9v1.5M12 9v4h-1M9 16c1.7 1.3 4.3 1.3 6 0"/>',
+  back:'<path d="M9 6h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-6-6z"/><path d="m13 10 4 4M17 10l-4 4"/>',
+  partly:'<path d="M8.5 3v1.3M3.3 8.2H2M4.8 4.6l.9.9M12.2 4.6l-.9.9M5.2 11.4A3.7 3.7 0 0 1 11.9 6.7"/><path d="M9.5 20h8a3.5 3.5 0 0 0 .3-7 5.5 5.5 0 0 0-10.4 1.3A3 3 0 0 0 9.5 20z"/>',
+  drop:'<path d="M12 3s6 6.6 6 11a6 6 0 0 1-12 0c0-4.4 6-11 6-11z"/>',
+  wind:'<path d="M3 8h10a3 3 0 1 0-3-3M3 12h15a3 3 0 1 1-3 3M3 16h7"/>',
+  gauge:'<path d="M4 18a8 8 0 1 1 16 0"/><path d="m12 18 4-6"/>',
+  sunrise:'<path d="M3 19h18M7 15a5 5 0 0 1 10 0M12 3v5M9.5 5.5 12 3l2.5 2.5"/>',
+  sunset:'<path d="M3 19h18M7 15a5 5 0 0 1 10 0M12 3v5M9.5 5.5 12 8l2.5-2.5"/>',
+  dice:'<rect x="7" y="7" width="14" height="14" rx="3"/><path d="M17 7V5.5A2.5 2.5 0 0 0 14.5 3h-9A2.5 2.5 0 0 0 3 5.5v9A2.5 2.5 0 0 0 5.5 17H7"/><circle cx="11" cy="11" r=".9" fill="currentColor"/><circle cx="17" cy="11" r=".9" fill="currentColor"/><circle cx="14" cy="14" r=".9" fill="currentColor"/><circle cx="11" cy="17" r=".9" fill="currentColor"/><circle cx="17" cy="17" r=".9" fill="currentColor"/>',
+  share:'<path d="M12 15V3.5M7.5 7.5 12 3l4.5 4.5"/><path d="M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/>',
+  image:'<rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
+  save:'<path d="M5 3h11l3 3v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z"/><path d="M8 3v5h7V3M8 21v-7h8v7"/>',
+  pin:'<path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>',
+  cloud:'<path d="M7 18h10.5a4 4 0 0 0 .3-8A6 6 0 0 0 6.2 9.6 4.2 4.2 0 0 0 7 18z"/>',
+  rain:'<path d="M7 15h10.5a3.5 3.5 0 0 0 .3-7A5.5 5.5 0 0 0 6.6 8 3.6 3.6 0 0 0 7 15zM8 18l-1 3M12 18l-1 3M16 18l-1 3"/>',
+  snow:'<path d="M7 14h10.5a3.5 3.5 0 0 0 .3-7A5.5 5.5 0 0 0 6.6 7 3.6 3.6 0 0 0 7 14z"/><path d="M8 18v.01M12 18v.01M16 18v.01M10 21v.01M14 21v.01"/>',
+  fog:'<path d="M4 9h16M3 13h18M5 17h14"/>',
+  upload:'<path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/>',
+};
+const ico = k => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${IC[k] || IC.star}</svg>`;
+IC.refresh = '<path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/>';
+
+/* ================= storage ================= */
+const GD_KEY = 'kyou.gd', DATA_KEY = 'kyou.data', HIBI_GD = 'hibi.gd', HIBI_DATA = 'hibi.v1';
+const GD_API = 'https://www.googleapis.com/drive/v3/files';
+const DEF_NORIKAE = 'https://norikae.gohanoishi.workers.dev';
+const lsGet = k => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } };
+let gd = lsGet(GD_KEY) || {};
+const gdPut = o => { gd = { ...gd, ...o }; lsSet(GD_KEY, gd); };
+// only what the timeline needs is kept here (no diary, no photos)
+let D = lsGet(DATA_KEY); // { S, at (when hibi.json was saved), got (when we read it), src }
+const pick = s => ({
+  events: Array.isArray(s.events) ? s.events : [],
+  todos: Array.isArray(s.todos) ? s.todos : [],
+  school: s.school && typeof s.school === 'object' ? s.school : {},
+  settings: { holidays: !s.settings || s.settings.holidays !== false, theme: s.settings && s.settings.theme, accent: s.settings && s.settings.accent, norikae: s.settings && s.settings.norikae },
+});
+let S = D && D.S ? D.S : null;
+
+// ひび手帳を同じ端末の Safari で使っているときは、その中身も読める（同じ github.io の中なので）
+const hibiLocal = () => { const o = lsGet(HIBI_DATA); return o && Array.isArray(o.events) ? o : null; };
+
+const norikaeBase = () => {
+  let u = (gd.base || (S && S.settings.norikae) || (hibiLocal() || { settings: {} }).settings.norikae || DEF_NORIKAE).trim();
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(u)) u = 'https://' + u;
+  try { const x = new URL(u); return x.protocol === 'https:' ? (x.origin + x.pathname).replace(/\/+$/, '') : ''; } catch (e) { return ''; }
+};
+const authBase = () => { const b = norikaeBase(); return b ? b + '/hibi-auth' : ''; };
+
+/* ================= Google login (read only) ================= */
+function gdBorrow() {
+  // ひび手帳がこの端末（同じ Safari）で Google にログイン済みなら、そのログインを使う（ひび手帳の記録は書き換えない）
+  if (gd.rt || gd.noBorrow) return;
+  const h = lsGet(HIBI_GD); if (h && h.rt) gdPut({ rt: h.rt, email: h.email || '', borrowed: true });
+}
+function gdLogin() {
+  const b = authBase(); if (!b) { toast('乗換案内のURLが正しくありません（設定で直せます）'); return; }
+  const s = Math.random().toString(36).slice(2, 12); try { localStorage.setItem(GD_KEY + '.s', s); } catch (e) {}
+  location.href = `${b}/start?ret=${encodeURIComponent(location.origin + location.pathname)}&s=${s}${gd.email ? '&hint=' + encodeURIComponent(gd.email) : ''}`;
+}
+function gdFromHash() {
+  const h = new URLSearchParams(location.hash.slice(1)); if (!h.has('gauth') && !h.has('gauth_err')) return;
+  let s0 = ''; try { s0 = localStorage.getItem(GD_KEY + '.s') || ''; localStorage.removeItem(GD_KEY + '.s'); } catch (e) {}
+  history.replaceState(null, '', location.pathname + location.search);
+  if (!s0 || h.get('s') !== s0) return;
+  if (h.has('gauth_err')) { const e = h.get('gauth_err'); toast(e === 'access_denied' ? 'ログインを取りやめました' : 'Googleにログインできませんでした。もう一度お試しください'); return; }
+  try {
+    const p = JSON.parse(decodeURIComponent(escape(atob(h.get('gauth').replace(/-/g, '+').replace(/_/g, '/')))));
+    if (!p.rt) throw new Error();
+    gdPut({ rt: p.rt, at: p.at, exp: p.exp, email: p.email || '', fid: '', borrowed: false, noBorrow: false });
+    toast(`${p.email || 'Google'} でログインしました`);
+  } catch (e) { toast('Googleにログインできませんでした。もう一度お試しください'); }
+}
+async function gdToken() {
+  if (gd.at && gd.exp - 60000 > Date.now()) return gd.at;
+  const r = await fetch(authBase() + '/token', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rt: gd.rt }) });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401) { gd = { email: gd.email, base: gd.base }; lsSet(GD_KEY, gd); throw new Error('revoked'); }
+  if (!r.ok || !j.at) throw new Error('token');
+  gdPut({ at: j.at, exp: j.exp }); return j.at;
+}
+async function gdFetch(url) {
+  const go = async () => fetch(url, { headers: { authorization: 'Bearer ' + await gdToken() }, cache: 'no-store' });
+  let r = await go();
+  if (r.status === 401) { gdPut({ at: '', exp: 0 }); r = await go(); }
+  if (r.status === 404) throw new Error('gone');
+  if (!r.ok) throw new Error('drive ' + r.status);
+  return r;
+}
+async function gdFind() {
+  const u = `${GD_API}?spaces=appDataFolder&pageSize=10&fields=files(id,modifiedTime)&q=${encodeURIComponent("name='hibi.json'")}`;
+  const f = ((await (await gdFetch(u)).json()).files || [])[0];
+  if (!f) return null; gdPut({ fid: f.id }); return f;
+}
+
+/* ================= loading ================= */
+let busy = false, err = '';
+async function load(manual) {
+  if (busy) return; gdBorrow();
+  if (!gd.rt) {
+    // not logged in: use ひび手帳 on this same Safari if it is here
+    const h = hibiLocal();
+    if (h) { setData(h, 0, 'local'); err = ''; } else if (manual) toast('Googleでログインすると、ひび手帳の予定を読み込めます');
+    render(); return;
+  }
+  busy = true; err = ''; render();
+  try {
+    let f = gd.fid ? { id: gd.fid } : await gdFind();
+    if (!f) { err = 'ドライブにひび手帳のデータがまだありません。ひび手帳の設定で「Googleドライブに自動保存」をオンにしてください'; return; }
+    // modifiedTime first: when nothing changed, skip the download
+    let meta;
+    try { meta = await (await gdFetch(`${GD_API}/${f.id}?fields=id,modifiedTime`)).json(); }
+    catch (e) { if (e.message !== 'gone') throw e; f = await gdFind(); if (!f) { err = 'ドライブにひび手帳のデータが見つかりません'; return; } meta = f; }
+    const at = Date.parse(meta.modifiedTime) || Date.now();
+    if (!manual && D && D.src === 'drive' && D.at === at) { D.got = Date.now(); lsSet(DATA_KEY, D); return; }
+    const o = await (await gdFetch(`${GD_API}/${meta.id}?alt=media`)).json();
+    const s = o && o.data ? o.data : o;
+    if (!s || !Array.isArray(s.events)) throw new Error('shape');
+    setData(s, at, 'drive');
+    if (manual) toast('最新の予定を読み込みました');
+  } catch (e) {
+    err = e.message === 'revoked' ? 'Googleのログインが切れました。もう一度ログインしてください'
+      : navigator.onLine === false ? 'オフラインです。前に読み込んだ予定を表示しています'
+      : e.message === 'token' ? 'ログインの確認ができませんでした（乗換案内のURLを確かめてください）'
+      : '読み込めませんでした。少ししてからもう一度お試しください';
+    if (manual) toast(err);
+  } finally { busy = false; applyTheme(); render(); }
+}
+function setData(s, at, src) {
+  S = pick(s); D = { S, at, got: Date.now(), src };
+  if (!lsSet(DATA_KEY, D)) { try { localStorage.removeItem(DATA_KEY); } catch (e) {} }
+  applyTheme();
+}
+
+/* ================= holidays（ひび手帳と同じ計算） ================= */
+const holCache = {};
+function holidays(y) {
+  if (holCache[y]) return holCache[y];
+  const h = new Map();
+  const add = (m, d, n) => h.set(`${y}-${pad(m)}-${pad(d)}`, n);
+  const nthMon = (m, n) => { const f = new Date(y, m - 1, 1); return iso(new Date(y, m - 1, 1 + (8 - f.getDay()) % 7 + 7 * (n - 1))); };
+  const k = Math.floor((y - 1980) / 4);
+  add(1, 1, '元日'); h.set(nthMon(1, 2), '成人の日'); add(2, 11, '建国記念の日');
+  if (y >= 2020) add(2, 23, '天皇誕生日'); else if (y <= 2018) add(12, 23, '天皇誕生日');
+  add(3, Math.floor(20.8431 + 0.242194 * (y - 1980) - k), '春分の日');
+  add(4, 29, '昭和の日'); add(5, 3, '憲法記念日'); add(5, 4, 'みどりの日'); add(5, 5, 'こどもの日');
+  if (y === 2020) { add(7, 23, '海の日'); add(7, 24, 'スポーツの日'); add(8, 10, '山の日'); }
+  else if (y === 2021) { add(7, 22, '海の日'); add(7, 23, 'スポーツの日'); add(8, 8, '山の日'); }
+  else { h.set(nthMon(7, 3), '海の日'); if (y >= 2016) add(8, 11, '山の日'); }
+  if (y === 2019) { add(5, 1, '天皇の即位の日'); add(10, 22, '即位礼正殿の儀'); }
+  h.set(nthMon(9, 3), '敬老の日');
+  add(9, Math.floor(23.2488 + 0.242194 * (y - 1980) - k), '秋分の日');
+  if (y !== 2020 && y !== 2021) h.set(nthMon(10, 2), y >= 2020 ? 'スポーツの日' : '体育の日'); add(11, 3, '文化の日'); add(11, 23, '勤労感謝の日');
+  for (const d of [...h.keys()]) { const mid = addDays(d, 1); if (h.has(addDays(d, 2)) && !h.has(mid) && wd(mid) !== 0) h.set(mid, '国民の休日'); }
+  for (const d of [...h.keys()].sort()) if (wd(d) === 0) { let n = addDays(d, 1); while (h.has(n)) n = addDays(n, 1); h.set(n, '振替休日'); }
+  return (holCache[y] = h);
+}
+
+/* ================= events（繰り返し・授業はひび手帳と同じ決まりで） ================= */
+function matches(ev, d) {
+  if (ev.skip && ev.skip[d]) return false;
+  if (ev.until && d > ev.until) return false;
+  switch (ev.repeat) {
+    case 'daily': return !(ev.every > 1) || diffDays(ev.date, d) % ev.every === 0;
+    case 'weekdays': { const w = wd(d); return w >= 1 && w <= 5; }
+    case 'weekly': return (ev.days && ev.days.length ? ev.days : [wd(ev.date)]).includes(wd(d)) && (!(ev.every > 1) || Math.floor(diffDays(addDays(ev.date, -wd(ev.date)), addDays(d, -wd(d))) / 7) % ev.every === 0);
+    case 'monthly': return P(d).getDate() === P(ev.date).getDate() && (!(ev.every > 1) || ((+d.slice(0, 4) - +ev.date.slice(0, 4)) * 12 + (+d.slice(5, 7) - +ev.date.slice(5, 7))) % ev.every === 0);
+    case 'nth': { const a = P(d), b = P(ev.date); return a.getDay() === b.getDay() && Math.ceil(a.getDate() / 7) === Math.ceil(b.getDate() / 7); }
+    case 'yearly': return d.slice(5) === ev.date.slice(5) && (!(ev.every > 1) || (+d.slice(0, 4) - +ev.date.slice(0, 4)) % ev.every === 0);
+    default: return d === ev.date;
+  }
+}
+function eventsOn(d) {
+  const out = [];
+  for (const ev of S.events) {
+    if (!ev || typeof ev.date !== 'string') continue;
+    const span = evSpan(ev);
+    if (!ev.repeat || ev.repeat === 'none') { if (ev.date <= d && addDays(ev.date, span) >= d && !(ev.skip && ev.skip[ev.date])) out.push({ ev, date: ev.date }); continue; }
+    for (let x = addDays(d, -span); x <= d; x = addDays(x, 1)) if (x >= ev.date && matches(ev, x)) out.push({ ev, date: x });
+  }
+  return out;
+}
+const sc = () => S.school || {};
+const inRange = (d, a, b) => (!a || d >= a) && (!b || d <= b);
+const termAt = d => (sc().terms || []).filter(t => inRange(d, t.start, t.end)).sort((a, b) => (b.start || '').localeCompare(a.start || ''))[0];
+const breakAt = (t, d) => t && (t.breaks || []).find(b => inRange(d, b.start, b.end));
+function classesOn(d) {
+  const s = sc(), out = [], periods = s.periods || [];
+  if (!(s.classes || []).length) return out;
+  const day = (s.days || {})[d] || {}, t = termAt(d), sw = day.w !== undefined ? +day.w : null;
+  const reg = !!t && !day.off && (sw !== null || !(breakAt(t, d) || (s.holidayOff && holidays(+d.slice(0, 4)).get(d))));
+  const w = sw === null ? wd(d) : sw;
+  const mk = (c, p, k) => ({ ev: Object.assign({ id: `cls_${c.id}_${p}`, cls: c.id, p, title: c.name, start: periods[p][0], end: periods[p][1], color: c.color, icon: 'school', memo: c.room || '' }, k), date: d });
+  for (const c of s.classes) {
+    if (reg && t && c.term === t.id) for (const sl of c.slots || []) {
+      if (sl.w !== w || !periods[sl.p]) continue;
+      out.push(mk(c, sl.p, (c.off || {})[`${d}#${sl.p}`] ? { off: true } : null));
+    }
+    for (const x of c.extra || []) if (x.d === d && periods[x.p]) out.push(mk(c, x.p, { extra: true }));
+  }
+  return out;
+}
+function schoolNote(d) {
+  const s = sc(); if (!(s.classes || []).length) return null;
+  const day = (s.days || {})[d], t = termAt(d);
+  if (day && day.off) return { name: day.name || '授業なし', icon: 'school' };
+  if (day && day.w !== undefined) return { name: `${WD[day.w]}曜日の授業（振替授業日）`, icon: 'school' };
+  const b = breakAt(t, d); return b ? { name: b.name, icon: 'sun' } : null;
+}
+const isDone = (ev, d) => !ev.cls && !!(ev.done && ev.done[d]);
+const packedOf = (ev, d) => ((ev.packed || {})[d] || []).filter(t => (ev.items || []).includes(t));
+
+// everything for today, in the same shape the timeline draws
+function today() {
+  const T = todayISO(), Y = addDays(T, -1);
+  const occ = eventsOn(T).filter(o => !o.ev.calOnly && !multiDay(o.ev));
+  const all = occ.filter(o => o.ev.allDay);
+  const items = occ.filter(o => !o.ev.allDay).map(o => { const s = toMin(o.ev.start); return { ...o, s, e: s + evLen(o.ev) }; });
+  // a night shift that started yesterday and runs into today
+  for (const o of eventsOn(Y)) if (!o.ev.calOnly && overnight(o.ev) && o.date === Y) items.push({ ...o, s: 0, e: toMin(o.ev.end), fromY: true });
+  for (const o of classesOn(T)) { const s = toMin(o.ev.start); items.push({ ...o, s, e: s + evLen(o.ev) }); }
+  items.sort((a, b) => a.s - b.s || a.e - b.e);
+  const todos = [...(S.todos || []).map(x => [x, TODO_C]), ...(sc().tasks || []).map(x => { const c = (sc().classes || []).find(c => c.id === x.classId); return [x, c ? c.color : COLORS[4]]; })]
+    .filter(([x]) => x && !x.done && x.due && x.due <= T).sort((a, b) => a[0].due.localeCompare(b[0].due));
+  return { T, all, items, todos, note: schoolNote(T), hol: S.settings.holidays ? holidays(+T.slice(0, 4)).get(T) : '' };
+}
+
+/* ================= view ================= */
+const app = $('#app');
+const icoBtn = (act, k, label, cls = '') => `<button class="icon-btn ${cls}" data-act="${act}" aria-label="${label}">${ico(k)}</button>`;
+let VIEW = [];
+function head(T, hol) {
+  const F = P(T);
+  return `<div class="hd"><div><div class="d num">${F.getFullYear()}年${F.getMonth() + 1}月${F.getDate()}日(${WD[F.getDay()]})${hol ? `<span class="hol">${esc(hol)}</span>` : ''}</div><h1>今日</h1></div>
+    <div class="hd-btns">${gd.rt ? icoBtn('reload', 'refresh', '読み込み直す', busy ? 'spin' : '') : ''}${icoBtn('settings', 'gear', '設定')}</div></div>`;
+}
+function render() {
+  if (!S) { app.innerHTML = hello(); return; }
+  const { T, all, items, todos, note, hol } = today(), now = nowMin();
+  VIEW = items;
+  // summary ring: how far through today's items we are
+  const real = items.filter(o => !o.ev.off), done = real.filter(o => isDone(o.ev, o.date) || o.e <= now).length, left = real.filter(o => o.e > now);
+  const pct = real.length ? done / real.length : 0, C = 2 * Math.PI * 19;
+  const nx = left.find(o => o.s > now), cur = left.find(o => o.s <= now);
+  const sub = cur ? `いま：${esc(cur.ev.title)}（あと${dur(cur.e - now)}）` : nx ? `つぎ：${esc(nx.ev.title)}（${nx.s - now >= 60 ? hmM(nx.s) + 'から' : 'あと' + (nx.s - now) + '分'}）` : real.length ? '今日の予定はすべて終わりました' : '';
+  const sum = real.length || all.length ? `<div class="sum"><svg class="ring" viewBox="0 0 44 44"><circle class="bgc" cx="22" cy="22" r="19"/><circle class="fg" cx="22" cy="22" r="19" transform="rotate(-90 22 22)" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct)}"/></svg>
+    <div style="min-width:0"><b>${real.length ? `予定 ${real.length}件・のこり ${left.length}件` : '時間の決まった予定はありません'}</b>${sub ? `<small>${sub}</small>` : ''}</div></div>` : '';
+
+  let ad = '';
+  if (note) ad += chip(SCH_C, note.icon, note.name);
+  ad += all.map(o => chip(col(o.ev.color), o.ev.icon, o.ev.title, `data-act="open" data-k="a${S.events.indexOf(o.ev)}"`)).join('');
+  ad += todos.map(([x, c]) => chip(col(c), x.classId ? 'pen' : 'check', `〆 ${x.title}${x.due < T ? `（${diffDays(x.due, T)}日過ぎ）` : x.dueTime ? `（${hm(x.dueTime)}まで）` : ''}`, '', x.due < T ? 'over' : '')).join('');
+
+  let tl = '', prevEnd = null, nowShown = false;
+  items.forEach((o, i) => {
+    const ev = o.ev, len = o.e - o.s;
+    if (prevEnd !== null && o.s - prevEnd >= 30) tl += gapRow(prevEnd, o.s, now);
+    if (!nowShown && now < o.s) { tl += nowRow(now); nowShown = true; }
+    const inNow = !ev.off && now >= o.s && now < o.e; if (inNow) nowShown = true;
+    const H = Math.round(Math.min(150, 50 + len * 0.45)), dn = isDone(ev, o.date), past = !inNow && o.e <= now && !ev.off;
+    const c = col(ev.color), act = `data-act="open" data-k="${i}"`;
+    const tags = (ev.off ? '<span class="tag">休講</span>' : '') + (ev.extra ? '<span class="tag">補講・振替</span>' : '') + (o.fromY ? '<span class="tag">前の日から</span>' : '') + (inNow ? '<span class="tag now">いま</span>' : '')
+      + ((ev.items || []).length ? `<span class="tag">持ち物 ${packedOf(ev, o.date).length}/${ev.items.length}</span>` : '');
+    const meta = `${o.fromY ? '0:00' : hm(ev.start)} – ${(overnight(ev) && !o.fromY ? '翌' : '') + hm(ev.end)}・${ev.cls ? `${ev.p + 1}限${ev.memo ? '・' + esc(ev.memo) : ''}` : dur(len)}`;
+    tl += `<div class="row${dn ? ' done' : ''}${past ? ' past' : ''}${ev.off ? ' cancel' : ''}" style="--c:${c}">
+      <div class="t num">${o.fromY ? '0:00' : hm(ev.start)}${len >= 45 ? `<small>${hmM(o.e % 1440)}</small>` : ''}</div>
+      <div class="rail"><button class="pill" style="height:${H}px" ${act} aria-label="${esc(ev.title)}">${inNow ? `<span class="rest" style="height:${((o.e - now) / len * 100).toFixed(1)}%"></span>` : ''}${ico(ev.icon)}</button></div>
+      <button class="body" ${act}><span class="m num">${meta}</span><span class="tt">${esc(ev.title)}${tags}</span></button>
+      ${ev.cls ? '<span></span>' : `<span class="chk${dn ? ' on' : ''}" aria-label="${dn ? '完了' : '未完了'}">${ico('check')}</span>`}</div>`;
+    if (!ev.off) prevEnd = prevEnd === null ? o.e : Math.max(prevEnd, o.e);
+  });
+  if (!nowShown && items.length) tl += nowRow(now);
+
+  const src = D.src === 'local' ? 'この端末のひび手帳から読み込みました' : D.at ? `ひび手帳の保存：${md(iso(new Date(D.at)))} ${hmM(new Date(D.at).getHours() * 60 + new Date(D.at).getMinutes())}` : '';
+  app.innerHTML = `${head(T, hol)}${sum}${ad ? `<div class="ad">${ad}</div>` : ''}
+    ${items.length ? `<div class="tl">${tl}</div>` : `<div class="empty">${ico('sun')}今日は、時間の決まった予定はありません。</div>`}
+    <p class="foot${err ? ' err' : ''}">${err ? esc(err) : busy ? '読み込んでいます…' : esc(src)}</p>
+    ${!gd.rt && D.src === 'drive' ? '<button class="btn primary" data-act="login">Googleでログイン</button>' : ''}`;
+}
+const chip = (c, icon, text, attr = '', cls = '') => `<${attr ? 'button' : 'div'} class="chip ${cls}" style="--c:${c}" ${attr}><span class="c">${ico(icon)}</span><span>${esc(text)}</span></${attr ? 'button' : 'div'}>`;
+const gapRow = (a, b, now) => `<div class="row gap"><div class="t"></div><div class="rail"></div><div class="body">${now >= a && now < b ? `空き時間 あと${dur(b - now)}` : `空き時間 ${dur(b - a)}`}</div><span></span></div>`;
+const nowRow = now => `<div class="row now"><div class="t num">${hmM(now)}</div><div class="rail"><span class="dot"></span></div><div class="ln"></div></div>`;
+
+function hello() {
+  const local = !!hibiLocal();
+  return `${head(todayISO(), '')}<div class="hello"><img class="logo" src="icons/icon-192.png" alt="">
+    <h2>ひび手帳の「今日」だけ</h2>
+    <p>ひび手帳のタイムラインから、今日の予定だけを表示します。<br>月の表示や日記は開きません。</p>
+    <button class="btn primary" data-act="login">Googleでログイン</button>
+    ${local ? '<button class="btn" data-act="reload">この端末のひび手帳から読む</button>' : ''}
+    <p class="note" style="margin-top:18px">ひび手帳の 設定 →「Googleドライブに自動保存」でログインしているのと同じ Google アカウントでログインしてください。ひび手帳が保存したデータを読むだけで、こちらからは何も書き換えません。</p></div>`;
+}
+
+/* ================= sheets ================= */
+let sheet = null;
+function openSheet(html) {
+  closeSheet(true);
+  const ov = document.createElement('div'); ov.className = 'ov'; ov.dataset.act = 'close';
+  const sh = document.createElement('div'); sh.className = 'sheet'; sh.setAttribute('role', 'dialog');
+  sh.innerHTML = `<div class="sh-bar"><button data-act="close">閉じる</button></div><div class="sh-in">${html}</div>`;
+  document.body.append(ov, sh); sheet = [ov, sh];
+  requestAnimationFrame(() => { ov.classList.add('show'); sh.classList.add('show'); });
+}
+function closeSheet(now) {
+  if (!sheet) return; const [ov, sh] = sheet; sheet = null;
+  if (now) { ov.remove(); sh.remove(); return; }
+  ov.classList.remove('show'); sh.classList.remove('show'); setTimeout(() => { ov.remove(); sh.remove(); }, 330);
+}
+const REP = { daily: '毎日', weekdays: '平日（月〜金）', weekly: '毎週', monthly: '毎月', nth: '毎月（第◯曜日）', yearly: '毎年' };
+function detail(o) {
+  const ev = o.ev, c = col(ev.color), T = todayISO(), dn = isDone(ev, o.date);
+  const time = ev.allDay ? '終日' : `${o.fromY ? '前の日 ' + hm(ev.start) : hm(ev.start)} – ${(overnight(ev) && !o.fromY ? '翌' : '') + hm(ev.end)}（${dur(evLen(ev))}）`;
+  const li = (k, t) => t ? `<div class="li">${ico(k)}<span>${esc(t)}</span></div>` : '';
+  const packed = packedOf(ev, o.date);
+  const items = (ev.items || []).map(t => `<div class="li${packed.includes(t) ? ' on' : ''}"><span class="box">${ico('check')}</span><span>${esc(t)}</span></div>`).join('');
+  const info = li('clock', time) + li('repeat', REP[ev.repeat] || '') + li('school', ev.cls ? `${ev.p + 1}限${ev.off ? '・休講' : ''}` : '')
+    + li('train', ev.dest ? `${ev.from ? ev.from + ' → ' : ''}${ev.dest}` : '') + li('pin', ev.cls ? ev.memo : '') + (!ev.cls && !ev.allDay ? li('check', dn ? '完了しました' : '') : '');
+  return `<div class="dt-head"><span class="pill" style="--c:${c}">${ico(ev.icon)}</span><div style="min-width:0"><b>${esc(ev.title)}</b><small>${md(T)}(${WD[wd(T)]})</small></div></div>
+    <div class="card">${info}</div>
+    ${!ev.cls && ev.memo ? `<p class="lbl">メモ</p><div class="card">${li('pen', ev.memo)}</div>` : ''}
+    ${items ? `<p class="lbl">持ち物（${packed.length}/${ev.items.length}）</p><div class="card" style="--c:${c}">${items}</div>` : ''}
+    <p class="note" style="margin:14px 4px 0">変更や完了のチェックは、ひび手帳のタイムラインで行います。</p>`;
+}
+function settingsHTML() {
+  return `<p class="lbl" style="margin-top:0">Google</p><div class="card" style="padding:12px 14px">
+      ${gd.rt ? `<p class="note" style="margin:0 0 4px">ログイン中：<b>${esc(gd.email || 'Google')}</b></p>
+        <button class="btn" data-act="reload">いま読み込み直す</button><button class="btn ghost" data-act="logout">ログアウト</button>`
+      : `<button class="btn primary" data-act="login" style="margin-top:0">Googleでログイン</button>`}</div>
+    <p class="lbl">乗換案内のURL（ログインに使います）</p>
+    <div class="fld"><input id="set-base" type="url" value="${esc(gd.base || norikaeBase())}" autocapitalize="off" spellcheck="false" placeholder="${DEF_NORIKAE}"></div>
+    <p class="note" style="margin:6px 4px 0">ひび手帳の 設定 → 乗換案内 と同じURLにしてください。</p>
+    <p class="note" style="margin:16px 4px 0">この画面は、ひび手帳が Google ドライブに保存したデータを読むだけです。予定の追加・変更・日記・月の表示はひび手帳で。</p>`;
+}
+
+/* ================= actions ================= */
+const ACT = {
+  open: t => { const k = t.dataset.k; const o = k[0] === 'a' ? { ev: S.events[+k.slice(1)], date: todayISO() } : VIEW[+k]; if (o && o.ev) openSheet(detail(o)); },
+  close: () => closeSheet(),
+  reload: () => load(true),
+  login: () => gdLogin(),
+  settings: () => openSheet(settingsHTML()),
+  logout: () => {
+    // only this screen forgets the login (ひび手帳 keeps its own, so nothing is revoked)
+    gd = { base: gd.base, noBorrow: true }; lsSet(GD_KEY, gd); try { localStorage.removeItem(DATA_KEY); } catch (e) {}
+    S = null; D = null; err = ''; closeSheet(); render(); toast('ログアウトしました');
+  },
+};
+document.addEventListener('click', e => { const t = e.target.closest('[data-act]'); if (t && ACT[t.dataset.act]) ACT[t.dataset.act](t); });
+document.addEventListener('change', e => {
+  if (e.target.id !== 'set-base') return;
+  const v = e.target.value.trim(); gdPut({ base: v && v !== DEF_NORIKAE ? v : '', at: '', exp: 0 }); toast('保存しました');
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
+
+let toastT = 0;
+function toast(m) { const el = $('#toast'); el.textContent = m; el.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove('show'), 2600); }
+function applyTheme() {
+  const s = S ? S.settings : {}, r = document.documentElement;
+  if (s.theme === 'light' || s.theme === 'dark') r.dataset.theme = s.theme; else delete r.dataset.theme;
+  let a = ACCENTS[s.accent || ''];
+  if (!a && !s.accent) { try { const c = localStorage.getItem('hibi.accentColor'); if (okColor(c)) a = c; } catch (e) {} }
+  if (a) r.style.setProperty('--accent', a); else r.style.removeProperty('--accent');
+  const m = $('meta[name="theme-color"]'); if (m) m.content = getComputedStyle(document.body).getPropertyValue('--bg').trim() || '#F5EFEB';
+}
+
+/* ================= start ================= */
+gdFromHash(); applyTheme(); render(); load();
+// keep the now line moving, and pick up a new day after midnight
+let lastDay = todayISO();
+setInterval(() => { if (document.visibilityState === 'visible' && !sheet) render(); if (todayISO() !== lastDay) { lastDay = todayISO(); load(); } }, 30000);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  render(); if (!D || Date.now() - (D.got || 0) > 60000) load();
+});
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+})();
+</script>
+</body>
+</html>
