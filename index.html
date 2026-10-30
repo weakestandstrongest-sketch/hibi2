@@ -17,21 +17,21 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap">
 <style>
-/* ひび手帳と同じ色。Structured のように、色つきのカプセルを縦の線でつないで1日を並べる */
+/* ひび手帳と同じ色で、テーマカラーはひび手帳のブルー。Structured のように、色つきのカプセルを縦の線でつないで1日を並べる */
 :root{
   --bg:#F5EFEB; --surface:#FFFFFF; --surface-2:#FAF6F3; --ink:#232A5C; --ink-2:#6D7092; --ink-3:#A9AABD;
-  --line:#E2D9D2; --accent:#E07F78; --sun:#D45850; --overlay:rgba(24,26,48,.32); --shadow:0 6px 22px rgba(35,42,92,.08);
+  --line:#E2D9D2; --accent:#4F8ED6; --sun:#D45850; --overlay:rgba(24,26,48,.32); --shadow:0 6px 22px rgba(35,42,92,.08);
   --f-body:ui-rounded,"SF Pro Rounded","Hiragino Sans","Zen Maru Gothic","Noto Sans JP",system-ui,sans-serif;
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
     --bg:#141414; --surface:#252526; --surface-2:#1C1C1D; --ink:#F2F1F4; --ink-2:#A3A3AD; --ink-3:#66666F;
-    --line:#3A3A3F; --accent:#EF8A82; --sun:#F07D74; --overlay:rgba(0,0,0,.6); --shadow:none; color-scheme:dark;
+    --line:#3A3A3F; --accent:#6FA8E8; --sun:#F07D74; --overlay:rgba(0,0,0,.6); --shadow:none; color-scheme:dark;
   }
 }
 :root[data-theme="dark"]{
   --bg:#141414; --surface:#252526; --surface-2:#1C1C1D; --ink:#F2F1F4; --ink-2:#A3A3AD; --ink-3:#66666F;
-  --line:#3A3A3F; --accent:#EF8A82; --sun:#F07D74; --overlay:rgba(0,0,0,.6); --shadow:none; color-scheme:dark;
+  --line:#3A3A3F; --accent:#6FA8E8; --sun:#F07D74; --overlay:rgba(0,0,0,.6); --shadow:none; color-scheme:dark;
 }
 *,*::before,*::after{box-sizing:border-box}
 html{height:100%;background:var(--bg)}
@@ -192,7 +192,6 @@ const okColor = c => typeof c === 'string' && (/^#[0-9a-f]{3,8}$/i.test(c) || /^
 const COLORS = ['#E07F78','#E9A23B','#6B88B0','#86B067','#9B4F6E','#4FA39B','#A68BD2','#8E8E96'];
 const col = c => okColor(c) ? c : COLORS[2];
 const SCH_C = '#5B8FC9', TODO_C = '#E07F78';
-const ACCENTS = { blue: '#4F8ED6', green: '#4E9F72', purple: '#8C78D4', orange: '#DE8E2A', pink: '#D8628E' };
 
 /* ================= icons（ひび手帳と同じ） ================= */
 const IC = {
@@ -613,9 +612,6 @@ function toast(m) { const el = $('#toast'); el.textContent = m; el.classList.add
 function applyTheme() {
   const s = S ? S.settings : {}, r = document.documentElement;
   if (s.theme === 'light' || s.theme === 'dark') r.dataset.theme = s.theme; else delete r.dataset.theme;
-  let a = ACCENTS[s.accent || ''];
-  if (!a && !s.accent) { try { const c = localStorage.getItem('hibi.accentColor'); if (okColor(c)) a = c; } catch (e) {} }
-  if (a) r.style.setProperty('--accent', a); else r.style.removeProperty('--accent');
   const m = $('meta[name="theme-color"]'); if (m) m.content = getComputedStyle(document.body).getPropertyValue('--bg').trim() || '#F5EFEB';
 }
 
