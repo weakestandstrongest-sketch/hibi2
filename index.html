@@ -76,7 +76,6 @@ svg{display:block}
 .tl{position:relative}
 .row{position:relative;display:grid;grid-template-columns:52px 64px minmax(0,1fr);align-items:center;column-gap:6px;padding:0}
 .row .t{align-self:start;padding:6px 4px 0 0;text-align:right;font-size:12px;font-weight:600;color:var(--ink-2);line-height:1.25}
-.row .t small{display:block;font-size:11px;font-weight:500;color:var(--ink-3)}
 .rail{position:relative;align-self:stretch;display:flex;justify-content:center;align-items:flex-start}
 /* the line joining the items: each item's own color, fading into the next one's between them */
 /* Structured-style links (same as ひび手帳): dotted, centred on the pills, fading from one item's color into the next (drawn by drawLinks) */
@@ -582,7 +581,7 @@ function render() {
     const lines = r ? r.steps.filter(x => x.k === 'a' && !x.walk).map(x => x.line).filter(Boolean) : [];
     const meta = `${o.fromY ? '0:00' : hm(ev.start)} – ${(overnight(ev) && !o.fromY ? '翌' : '') + hm(ev.end)}・${ev.cls ? `${ev.p + 1}限${ev.memo ? '・' + esc(ev.memo) : ''}` : dur(len)}${lines.length ? '・' + esc(lines.join(' → ')) : ''}`;
     tl += `<div class="row it${dn ? ' done' : ''}" style="--c:${c}">
-      <div class="t num">${o.fromY ? '0:00' : hm(ev.start)}${len >= 45 ? `<small>${hmM(o.e % 1440)}</small>` : ''}</div>
+      <div class="t num">${o.fromY ? '0:00' : hm(ev.start)}</div>
       <div class="rail"><button class="pill" style="height:${H}px" ${act} aria-label="${esc(ev.title)}">${inNow ? `<span class="rest" style="height:${((o.e - now) / len * 100).toFixed(1)}%"></span>` : ''}${ico(ev.icon)}</button></div>
       <button class="body" ${act}><span class="m num">${meta}</span><span class="tt">${esc(ev.title)}${tags}</span></button></div>`;
     prevEnd = prevEnd === null ? o.e : Math.max(prevEnd, o.e);
