@@ -400,10 +400,12 @@ async function gdFetch(url) {
   if (!r.ok) throw new Error('drive ' + r.status);
   return r;
 }
+// the newest hibi.json every time: the drive can hold more than one (ひび手帳 makes a new one after logging in again
+// or when the old one is gone), and only the one ひび手帳 is writing to now keeps changing
 async function gdFind() {
-  const u = `${GD_API}?spaces=appDataFolder&pageSize=10&fields=files(id,modifiedTime)&q=${encodeURIComponent("name='hibi.json'")}`;
-  const f = ((await (await gdFetch(u)).json()).files || [])[0];
-  if (!f) return null; gdPut({ fid: f.id }); return f;
+  const u = `${GD_API}?spaces=appDataFolder&pageSize=20&orderBy=${encodeURIComponent('modifiedTime desc')}&fields=files(id,modifiedTime)&q=${encodeURIComponent("name='hibi.json' and trashed=false")}`;
+  const fs = ((await (await gdFetch(u)).json()).files || []).sort((a, b) => (Date.parse(b.modifiedTime) || 0) - (Date.parse(a.modifiedTime) || 0));
+  return fs[0] || null;
 }
 
 /* ================= loading ================= */
@@ -418,18 +420,15 @@ async function load(manual) {
   }
   busy = true; err = ''; render();
   try {
-    let f = gd.fid ? { id: gd.fid } : await gdFind();
-    if (!f) { err = 'ドライブにひび手帳のデータがまだありません。ひび手帳の設定で「Googleドライブに自動保存」をオンにしてください'; return; }
-    // modifiedTime first: when nothing changed, skip the download
-    let meta;
-    try { meta = await (await gdFetch(`${GD_API}/${f.id}?fields=id,modifiedTime`)).json(); }
-    catch (e) { if (e.message !== 'gone') throw e; f = await gdFind(); if (!f) { err = 'ドライブにひび手帳のデータが見つかりません'; return; } meta = f; }
+    const meta = await gdFind();
+    if (!meta) { err = 'ドライブにひび手帳のデータがまだありません。ひび手帳の設定で「Googleドライブに自動保存」をオンにしてください'; return; }
+    // when the newest file has not changed since last time, skip the download
     const at = Date.parse(meta.modifiedTime) || Date.now();
-    if (!manual && D && D.src === 'drive' && D.at === at) { D.got = Date.now(); lsSet(DATA_KEY, D); return; }
+    if (!manual && D && D.src === 'drive' && D.at === at && D.fid === meta.id) { D.got = Date.now(); lsSet(DATA_KEY, D); return; }
     const o = await (await gdFetch(`${GD_API}/${meta.id}?alt=media`)).json();
     const s = o && o.data ? o.data : o;
     if (!s || !Array.isArray(s.events)) throw new Error('shape');
-    setData(s, at, 'drive');
+    setData(s, at, 'drive', meta.id);
     if (manual) toast('最新の予定を読み込みました');
   } catch (e) {
     err = e.message === 'revoked' ? 'Googleのログインが切れました。もう一度ログインしてください'
@@ -439,8 +438,8 @@ async function load(manual) {
     if (manual) toast(err);
   } finally { busy = false; applyTheme(); render(); }
 }
-function setData(s, at, src) {
-  S = pick(s); D = { S, at, got: Date.now(), src };
+function setData(s, at, src, fid) {
+  S = pick(s); D = { S, at, got: Date.now(), src, fid };
   if (!lsSet(DATA_KEY, D)) { try { localStorage.removeItem(DATA_KEY); } catch (e) {} }
   applyTheme();
 }
@@ -588,7 +587,7 @@ function render() {
   });
   if (!nowShown && items.length) tl += nowRow(now);
 
-  const src = D.src === 'local' ? 'この端末のひび手帳から読み込みました' : D.at ? `ひび手帳の保存：${md(iso(new Date(D.at)))} ${hmM(new Date(D.at).getHours() * 60 + new Date(D.at).getMinutes())}` : '';
+  const src = D.src === 'local' ? 'この端末のひび手帳から読み込みました' : D.at ? `ひび手帳の保存：${md(iso(new Date(D.at)))} ${hmM(new Date(D.at).getHours() * 60 + new Date(D.at).getMinutes())}${D.got ? `（${hmM(new Date(D.got).getHours() * 60 + new Date(D.got).getMinutes())}に確認）` : ''}` : '';
   app.innerHTML = `${head(T, hol)}${sum}${ad ? `<div class="ad">${ad}</div>` : ''}
     ${items.length ? `<div class="tl">${tl}</div>` : `<div class="empty">${ico('sun')}今日は、時間の決まった予定はありません。</div>`}
     <p class="foot${err ? ' err' : ''}">${err ? esc(err) : busy ? '読み込んでいます…' : esc(src)}</p>
@@ -725,10 +724,13 @@ gdFromHash(); applyTheme(); render(); load();
 // keep the now line moving, and pick up a new day after midnight
 let lastDay = todayISO();
 setInterval(() => { if (document.visibilityState === 'visible' && !sheet) render(); if (todayISO() !== lastDay) { lastDay = todayISO(); load(); } }, 30000);
+setInterval(() => { if (document.visibilityState === 'visible') load(); }, 120000);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
-  render(); if (!D || Date.now() - (D.got || 0) > 60000) load();
+  render(); load();
 });
+addEventListener('pageshow', e => { if (e.persisted) load(); });
+addEventListener('focus', () => load());
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 })();
 </script>
