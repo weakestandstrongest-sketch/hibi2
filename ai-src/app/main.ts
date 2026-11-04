@@ -49,12 +49,24 @@ export interface DiaryEntry {
   feelings?: string[];
   tags?: string[];
 }
-/** What the page gives the AI: read-only views over ひび手帳's data. */
+export interface NewEvent {
+  title: string;
+  date: string; // YYYY-MM-DD
+  allDay: boolean;
+  start?: string; // HH:MM
+  end?: string;
+}
+/** What the page gives the AI: views over ひび手帳's data, and a way to ask ひび手帳 to add an event. */
 export interface HibiSource {
   ready(): boolean;
   day(date: string): DayInfo;
   todos(): TodoItem[];
   entries(): DiaryEntry[];
+  /**
+   * Ask ひび手帳 to add an event: it goes to the drive's hibi-inbox.json and ひび手帳 adds it the next time it opens.
+   * Returns the event as it was sent.
+   */
+  addEvent(e: NewEvent): Promise<NewEvent>;
   /** Every event's definition, for questions without a date (「最後にジムに行ったのは？」). */
   events(): Array<{ id: string; title: string; date: string; start?: string; end?: string; allDay?: boolean; repeat?: string; memo?: string }>;
 }
@@ -227,6 +239,93 @@ function todoTool(src: HibiSource): AITool<{ within?: number }, string> {
   };
 }
 
+// ---------------------------------------------------------------- adding an event (write: always confirmed first)
+const ADD_Q = /追加|入れて|いれて|入れと|いれと|入れてお|登録|予定に(して|する)|予定を(作|つく)って|予定(入|はい)れ/;
+const pad = (n: number) => String(n).padStart(2, "0");
+/** 「明日15時から17時までバイトを追加して」 → { title: "バイト", date, start: "15:00", end: "17:00" } */
+export function parseAdd(question: string, ctx: ToolContext): NewEvent | undefined {
+  let q = question.normalize("NFKC").trim();
+  if (!ADD_Q.test(q) || /できる|できます|でき\?|方法|どうやって|やり方|消して|削除|変更/.test(q)) return undefined;
+  const t = today(ctx);
+  // the day
+  let date = t;
+  const wdm = q.match(/(今週|来週|再来週)?の?\s*([月火水木金土日])曜日?/);
+  if (/明後日|あさって/.test(q)) { date = addDays(t, 2); q = q.replace(/(明後日|あさって)(に|の|は)?/, " "); }
+  else if (wdm) {
+    // 「金曜に」 the next one (today counts); 「来週の金曜」 the one in next week (weeks start on Monday)
+    const want = "日月火水木金土".indexOf(wdm[2]!), now = new Date(+t.slice(0, 4), +t.slice(5, 7) - 1, +t.slice(8, 10)).getDay();
+    if (wdm[1]) { const mon = addDays(t, -((now + 6) % 7)); date = addDays(mon, (wdm[1] === "来週" ? 7 : wdm[1] === "再来週" ? 14 : 0) + (want + 6) % 7); }
+    else date = addDays(t, (want - now + 7) % 7);
+    q = q.replace(new RegExp(`${wdm[0]}(に|の|は)?`), " ");
+  } else {
+    const intent = parseDateIntent(q, t);
+    if (intent) {
+      if (intent.from !== intent.to) return undefined;
+      date = intent.from;
+      // the date reader looks back (made for the diary); a plan without a year is the next one to come
+      if (date < t && !/年/.test(intent.phrase)) { const y = new Date(+t.slice(0, 4), +date.slice(5, 7) - 1, +date.slice(8, 10)) < new Date(+t.slice(0, 4), +t.slice(5, 7) - 1, +t.slice(8, 10)) ? +t.slice(0, 4) + 1 : +t.slice(0, 4); date = `${y}${date.slice(4)}`; }
+      q = q.replace(new RegExp(`${intent.phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(に|の|は)?`), " ");
+    }
+  }
+  // the times: 「15時」「15:30」「3時半」「午後3時」
+  const times: number[] = [];
+  q = q.replace(/(午前|午後|朝|夜|夕方)?\s*(\d{1,2})\s*(?:時|:)\s*(?:(\d{1,2})\s*分?|(半))?\s*(から|〜|~|-|ー|まで|に|の)?/g, (_m, ap, h, mi, half) => {
+    let hh = +h; const mm = half ? 30 : mi ? +mi : 0;
+    if ((ap === "午後" || ap === "夜" || ap === "夕方") && hh < 12) hh += 12;
+    if (hh <= 23 && mm <= 59) times.push(hh * 60 + mm);
+    return " ";
+  });
+  // the name: what is left once the request words and particles are gone
+  const title = q
+    .replace(/(という|って)?(の)?予定(を|に)?/g, " ")
+    .replace(/(を|に)?\s*(追加|入れ|いれ|登録|作っ|つくっ)[^\s]*$/, " ")
+    .replace(/[、。!?！？]/g, " ")
+    .replace(/^(\s*(に|で|は|を|の|から)\s+)+/, "")
+    .replace(/(\s*(に|で|は|を|の)\s*)+$/, "")
+    .replace(/\s+/g, " ").trim();
+  if (!title || title.length > 40) return undefined;
+  if (!times.length) return { title, date, allDay: true };
+  const s0 = times[0]!, e0 = times[1] !== undefined && times[1] > s0 ? times[1] : Math.min(s0 + 60, 23 * 60 + 59);
+  return { title, date, allDay: false, start: `${pad(Math.floor(s0 / 60))}:${pad(s0 % 60)}`, end: `${pad(Math.floor(e0 / 60))}:${pad(e0 % 60)}` };
+}
+const eventLabel = (e: NewEvent) => `${dayJa(e.date)} ${e.allDay ? "終日" : `${hm(e.start!)}〜${hm(e.end!)}`}`;
+
+function addTool(src: HibiSource): AITool<NewEvent & Record<string, unknown>, NewEvent> {
+  return {
+    name: "hibi_add_event",
+    description: "ひび手帳に予定を追加する。「明日15時にバイトを追加して」のように頼まれたときに使う",
+    access: "write",
+    whenToUse: [ADD_Q],
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "予定の名前" },
+        date: { type: "string", description: "YYYY-MM-DD" },
+        allDay: { type: "boolean", description: "終日の予定なら true" },
+        start: { type: "string", description: "開始 HH:MM（終日なら省略）" },
+        end: { type: "string", description: "終了 HH:MM（終日なら省略）" },
+      },
+      required: ["title", "date"],
+    },
+    route(question, ctx) {
+      return parseAdd(question, ctx) as (NewEvent & Record<string, unknown>) | undefined;
+    },
+    formatAnswer(result) {
+      if (result.ok) return `「${result.value.title}」を ${eventLabel(result.value)} で追加しました。\nひび手帳を開くと、ひび手帳の予定に入ります（それまでは、まいにち で「追加待ち」と表示します）。`;
+      if (result.declined) return "予定は追加しませんでした。";
+      return `予定を追加できませんでした（${result.error}）。`;
+    },
+    async execute(args) {
+      const date = String(args.date ?? ""), allDay = args.allDay === true || !args.start;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("日付が正しくありません");
+      const e: NewEvent = { title: String(args.title ?? "").trim().slice(0, 60), date, allDay, ...(allDay ? {} : { start: String(args.start), end: String(args.end || args.start) }) };
+      if (!e.title) throw new Error("予定の名前がありません");
+      if (!allDay && !(/^([01]\d|2[0-3]):[0-5]\d$/.test(e.start!) && /^([01]\d|2[0-3]):[0-5]\d$/.test(e.end!))) throw new Error("時刻が正しくありません");
+      return src.addEvent(e);
+    },
+  };
+}
+
 // ---------------------------------------------------------------- records for everything else (RAG)
 function match(rec: MemoryRecord, words: string[]): boolean {
   if (!words.length) return true;
@@ -276,11 +375,12 @@ export function createHibiAI(src: HibiSource): PersonalAI {
     appName: "ひび手帳",
     getSystemPrompt: () =>
       "あなたは手帳アプリ「ひび手帳」のアシスタント「まいにち」です。日本語で、やさしく簡潔に答えてください。" +
-      "予定・日記・やることについては、渡された記録だけを根拠にし、記録にないことは「記録にはありません」と答えてください。",
+      "予定・日記・やることについては、渡された記録だけを根拠にし、記録にないことは「記録にはありません」と答えてください。" +
+      "予定の追加は、ツールを使って頼まれたときだけ行います。予定の変更や削除はできないので、ひび手帳で行うよう伝えてください。",
     async searchData(q) {
       return records(src, q, new Date());
     },
-    getTools: () => [nextTool(src), freeTool(src), todoTool(src), scheduleTool(src)] as unknown as AITool[],
+    getTools: () => [addTool(src), nextTool(src), freeTool(src), todoTool(src), scheduleTool(src)] as unknown as AITool[],
   });
   return new PersonalAI({
     appId: APP_ID,

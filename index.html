@@ -94,6 +94,8 @@ svg{display:block}
 .row.done .tt{text-decoration:line-through;text-decoration-thickness:1.5px;color:var(--ink-3)}
 .tag{display:inline-block;margin-left:6px;padding:0 7px;border-radius:999px;font-size:11px;font-weight:700;vertical-align:2px;background:var(--surface-2);color:var(--ink-2)}
 .tag.now{background:var(--accent);color:#fff}
+.tag.pend{background:none;color:var(--accent);box-shadow:inset 0 0 0 1.5px var(--accent)}
+.row.it.pending .pill{opacity:.6;box-shadow:none}
 .tag.rt{background:color-mix(in srgb,var(--c) 18%,transparent);color:var(--c)}
 .tag .ico{display:inline-block;width:11px;height:11px;stroke-width:2.4;vertical-align:-1px;margin-right:2px}
 /* free time between items */
@@ -227,6 +229,17 @@ svg{display:block}
 .msg.ai.err{color:var(--sun)}
 .msg .src{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;white-space:normal}
 .msg .src span{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--surface-2);color:var(--ink-2)}
+.msg.asking{width:86%;white-space:normal}
+.cf b{display:block;font-size:15px;margin-bottom:8px}
+.cf label{display:block;font-size:12px;font-weight:700;color:var(--ink-2);margin-top:8px}
+.cf .inp{display:block;width:100%;margin-top:4px;padding:9px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--bg);font-size:16px;color:var(--ink)}
+.cf .cf-ad{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--ink)}
+.cf .cf-ad input{width:20px;height:20px;accent-color:var(--accent)}
+.cf-tm{display:flex;align-items:center;gap:8px;margin-top:8px}
+.cf-tm .inp{margin:0;min-width:0;flex:1}
+.cf-btns{display:flex;gap:8px;margin-top:12px}
+.cf-btns .btn{margin:0;padding:11px}
+.cf p{margin:8px 0 0;font-size:12px;color:var(--ink-3)}
 .msg .tool{display:block;font-size:11.5px;color:var(--ink-3);margin-bottom:4px}
 .composer{position:fixed;left:0;right:0;bottom:calc(max(10px,env(safe-area-inset-bottom)) + 70px);z-index:7;display:flex;justify-content:center;padding:0 12px;pointer-events:none}
 .composer form{pointer-events:auto;display:flex;align-items:flex-end;gap:8px;width:min(28rem,calc(100vw - 1.5rem));padding:6px 6px 6px 16px;border-radius:26px;
@@ -449,8 +462,8 @@ async function gdToken() {
   if (!r.ok || !j.at) throw new Error('token');
   gdPut({ at: j.at, exp: j.exp }); return j.at;
 }
-async function gdFetch(url) {
-  const go = async () => fetch(url, { headers: { authorization: 'Bearer ' + await gdToken() }, cache: 'no-store' });
+async function gdFetch(url, init = {}) {
+  const go = async () => fetch(url, { ...init, headers: { ...(init.headers || {}), authorization: 'Bearer ' + await gdToken() }, cache: 'no-store' });
   let r = await go();
   if (r.status === 401) { gdPut({ at: '', exp: 0 }); r = await go(); }
   if (r.status === 404) throw new Error('gone');
@@ -463,6 +476,56 @@ async function gdFind() {
   const u = `${GD_API}?spaces=appDataFolder&pageSize=20&orderBy=${encodeURIComponent('modifiedTime desc')}&fields=files(id,modifiedTime)&q=${encodeURIComponent("name='hibi.json' and trashed=false")}`;
   const fs = ((await (await gdFetch(u)).json()).files || []).sort((a, b) => (Date.parse(b.modifiedTime) || 0) - (Date.parse(a.modifiedTime) || 0));
   return fs[0] || null;
+}
+
+/* ================= ひび手帳に予定を頼む（hibi-inbox.json） =================
+   home と同じ受け渡しの場所。ここに置いた予定は、ひび手帳が次に開いたときに予定に入れて、中から消す。
+   入るまでのあいだは「追加待ち」として、この画面と AI に出す（ひび手帳の hibi.json に同じ予定が見えたら消える）。 */
+const IB_FILE = 'hibi-inbox.json', GD_UP = 'https://www.googleapis.com/upload/drive/v3/files', SENT_KEY = 'mainichi.sent';
+async function gdWrite(name, body, id) {
+  if (id) return (await (await gdFetch(`${GD_UP}/${id}?uploadType=media&fields=id`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body })).json()).id;
+  const b = 'mainichi' + Math.random().toString(36).slice(2), meta = JSON.stringify({ name, parents: ['appDataFolder'] });
+  return (await (await gdFetch(`${GD_UP}?uploadType=multipart&fields=id`, { method: 'POST', headers: { 'content-type': `multipart/related; boundary=${b}` },
+    body: `--${b}\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${b}\r\ncontent-type: application/json\r\n\r\n${body}\r\n--${b}--` })).json()).id;
+}
+async function ibRead() {
+  const u = `${GD_API}?spaces=appDataFolder&pageSize=10&fields=files(id)&q=${encodeURIComponent(`name='${IB_FILE}' and trashed=false`)}`, out = [];
+  for (const f of (await (await gdFetch(u)).json()).files || []) {
+    let o = {}; try { o = await (await gdFetch(`${GD_API}/${f.id}?alt=media`)).json(); } catch (e) { if (e.message === 'revoked') throw e; }
+    out.push({ id: f.id, items: Array.isArray(o && o.items) ? o.items : [] });
+  }
+  return out;
+}
+let sent = lsGet(SENT_KEY) || []; // [{ id, event, at }] what this app asked for
+let inboxSeen = []; // the まいにち items still in the drive's inbox, from the last check
+async function addToHibi(e) {
+  if (!gd.rt) throw new Error('Googleにログインしていないため、ひび手帳に渡せません（「今日」の画面からログインしてください）');
+  const item = { id: 'mn-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), kind: 'event', by: 'mainichi', createdAt: new Date().toISOString(),
+    event: { title: e.title, date: e.date, allDay: !!e.allDay, ...(e.allDay ? {} : { start: e.start, end: e.end }) } };
+  const files = await ibRead(), items = [...files.flatMap(f => f.items), item];
+  await gdWrite(IB_FILE, JSON.stringify({ app: 'hibi-inbox', version: 1, savedAt: new Date().toISOString(), by: 'mainichi', items }), files.length ? files[0].id : '');
+  sent.push({ id: item.id, event: item.event, at: Date.now() }); lsSet(SENT_KEY, sent);
+  inboxSeen.push(item);
+  if (tab === 'today') render();
+  return item.event;
+}
+// is this asked-for event already in ひび手帳's own data?
+const inHibi = e => S && S.events.some(x => x && x.date === e.date && x.title === e.title && !!x.allDay === !!e.allDay && (e.allDay || (x.start === e.start && x.end === e.end)));
+// what is still waiting for ひび手帳: asked for here (or seen in the inbox), and not in hibi.json yet
+function pendingEvents() {
+  if (!S) return [];
+  const map = new Map();
+  for (const x of sent) map.set(x.id, x.event);
+  for (const it of inboxSeen) if (it && it.kind === 'event' && it.event) map.set(String(it.id), it.event);
+  return [...map.entries()].filter(([, e]) => e && /^\d{4}-\d{2}-\d{2}$/.test(e.date) && !inHibi(e))
+    .map(([id, e]) => ({ id: 'pend_' + id, title: String(e.title), date: e.date, allDay: !!e.allDay, start: e.start || '09:00', end: e.end || '10:00', color: '#4F8ED6', icon: 'star', repeat: 'none', pending: true }));
+}
+async function ibCheck() {
+  try { inboxSeen = (await ibRead()).flatMap(f => f.items).filter(it => it && it.kind === 'event'); } catch (e) { return; }
+  // forget what ひび手帳 has taken in (or what is long gone from the inbox)
+  const still = new Set(inboxSeen.map(it => String(it.id)));
+  const next = sent.filter(x => !inHibi(x.event) && (still.has(x.id) || Date.now() - x.at < 3 * 864e5));
+  if (next.length !== sent.length) { sent = next; lsSet(SENT_KEY, sent); }
 }
 
 /* ================= loading ================= */
@@ -481,11 +544,12 @@ async function load(manual) {
     if (!meta) { err = 'ドライブにひび手帳のデータがまだありません。ひび手帳の設定で「Googleドライブに自動保存」をオンにしてください'; return; }
     // when the newest file has not changed since last time, skip the download
     const at = Date.parse(meta.modifiedTime) || Date.now();
-    if (!manual && D && D.src === 'drive' && D.at === at && D.fid === meta.id && D.v === DATA_V) { D.got = Date.now(); lsSet(DATA_KEY, D); return; }
+    if (!manual && D && D.src === 'drive' && D.at === at && D.fid === meta.id && D.v === DATA_V) { D.got = Date.now(); lsSet(DATA_KEY, D); await ibCheck(); return; }
     const o = await (await gdFetch(`${GD_API}/${meta.id}?alt=media`)).json();
     const s = o && o.data ? o.data : o;
     if (!s || !Array.isArray(s.events)) throw new Error('shape');
     setData(s, at, 'drive', meta.id);
+    await ibCheck();
     if (manual) toast('最新の予定を読み込みました');
   } catch (e) {
     err = e.message === 'revoked' ? 'Googleのログインが切れました。もう一度ログインしてください'
@@ -541,7 +605,7 @@ function matches(ev, d) {
 }
 function eventsOn(d) {
   const out = [];
-  for (const ev of S.events) {
+  for (const ev of [...S.events, ...pendingEvents()]) {
     if (!ev || typeof ev.date !== 'string') continue;
     const span = evSpan(ev);
     if (!ev.repeat || ev.repeat === 'none') { if (ev.date <= d && addDays(ev.date, span) >= d && !(ev.skip && ev.skip[ev.date])) out.push({ ev, date: ev.date }); continue; }
@@ -603,7 +667,7 @@ function today() {
 /* ================= view ================= */
 const app = $('#app');
 const icoBtn = (act, k, label, cls = '') => `<button class="icon-btn ${cls}" data-act="${act}" aria-label="${label}">${ico(k)}</button>`;
-let VIEW = [];
+let VIEW = [], VIEW_ALL = [];
 function head(T, hol) {
   const F = P(T);
   return `<div class="hd"><div><div class="d num">${F.getFullYear()}年${F.getMonth() + 1}月${F.getDate()}日(${WD[F.getDay()]})${hol ? `<span class="hol">${esc(hol)}</span>` : ''}</div><h1>今日</h1></div>
@@ -623,7 +687,8 @@ function render() {
 
   let ad = '';
   if (note) ad += chip(SCH_C, note.icon, note.name);
-  ad += all.map(o => chip(col(o.ev.color), o.ev.icon, o.ev.title, `data-act="open" data-k="a${S.events.indexOf(o.ev)}"`)).join('');
+  VIEW_ALL = all;
+  ad += all.map((o, i) => chip(col(o.ev.color), o.ev.icon, o.ev.title + (o.ev.pending ? '（追加待ち）' : ''), `data-act="open" data-k="a${i}"`)).join('');
   ad += todos.map(([x, c]) => chip(col(c), x.classId ? 'pen' : 'check', `〆 ${x.title}${x.due < T ? `（${diffDays(x.due, T)}日過ぎ）` : x.dueTime ? `（${hm(x.dueTime)}まで）` : ''}`, '', x.due < T ? 'over' : '')).join('');
 
   // between two items: the free time, the now line, or just the line joining them (from one's color to the next's)
@@ -637,12 +702,12 @@ function render() {
     const inNow = now >= o.s && now < o.e; if (inNow) nowShown = true;
     const H = Math.round(Math.min(170, 58 + len * 0.55)), dn = isDone(ev, o.date), act = `data-act="open" data-k="${i}"`;
     const r = ev.route && Array.isArray(ev.route.steps) ? ev.route : null;
-    const tags = (ev.extra ? '<span class="tag">補講・振替</span>' : '') + (o.fromY ? '<span class="tag">前の日から</span>' : '') + (inNow ? '<span class="tag now">いま</span>' : '')
+    const tags = (ev.pending ? '<span class="tag pend">追加待ち</span>' : '') + (ev.extra ? '<span class="tag">補講・振替</span>' : '') + (o.fromY ? '<span class="tag">前の日から</span>' : '') + (inNow ? '<span class="tag now">いま</span>' : '')
       + (r ? `<span class="tag rt">${ico('train')}経路</span>` : '')
       + ((ev.items || []).length ? `<span class="tag">持ち物 ${packedOf(ev, o.date).length}/${ev.items.length}</span>` : '');
     const lines = r ? r.steps.filter(x => x.k === 'a' && !x.walk).map(x => x.line).filter(Boolean) : [];
     const meta = `${o.fromY ? '0:00' : hm(ev.start)} – ${(overnight(ev) && !o.fromY ? '翌' : '') + hm(ev.end)}・${ev.cls ? `${ev.p + 1}限${ev.memo ? '・' + esc(ev.memo) : ''}` : dur(len)}${lines.length ? '・' + esc(lines.join(' → ')) : ''}`;
-    tl += `<div class="row it${dn ? ' done' : ''}" style="--c:${c}">
+    tl += `<div class="row it${dn ? ' done' : ''}${ev.pending ? ' pending' : ''}" style="--c:${c}">
       <div class="t num">${o.fromY ? '0:00' : hm(ev.start)}</div>
       <div class="rail"><button class="pill" style="height:${H}px" ${act} aria-label="${esc(ev.title)}">${inNow ? `<span class="rest" style="height:${((o.e - now) / len * 100).toFixed(1)}%"></span>` : ''}${ico(ev.icon)}</button></div>
       <button class="body" ${act}><span class="m num">${meta}</span><span class="tt">${esc(ev.title)}${tags}</span></button></div>`;
@@ -718,7 +783,7 @@ function detail(o) {
     <div class="card">${info}</div>
     ${!ev.cls && ev.memo ? `<p class="lbl">メモ</p><div class="card">${li('pen', ev.memo)}</div>` : ''}
     ${items ? `<p class="lbl">持ち物（${packed.length}/${ev.items.length}）</p><div class="card" style="--c:${c}">${items}</div>` : ''}
-    <p class="note" style="margin:14px 4px 0">変更や完了のチェックは、ひび手帳のタイムラインで行います。</p>`;
+    <p class="note" style="margin:14px 4px 0">${ev.pending ? 'まいにち の AI から頼んだ予定です。ひび手帳を開くと、ひび手帳の予定に入ります。' : '変更や完了のチェックは、ひび手帳のタイムラインで行います。'}</p>`;
 }
 // a route added from のりかえ: the stations and trains, as ひび手帳 shows them
 function routeHTML(ev, items, packed, c) {
@@ -749,7 +814,7 @@ function settingsHTML() {
 
 /* ================= actions ================= */
 const ACT = {
-  open: t => { const k = t.dataset.k; const o = k[0] === 'a' ? { ev: S.events[+k.slice(1)], date: todayISO() } : VIEW[+k]; if (o && o.ev) openSheet(detail(o)); },
+  open: t => { const k = t.dataset.k; const o = k[0] === 'a' ? VIEW_ALL[+k.slice(1)] : VIEW[+k]; if (o && o.ev) openSheet(detail(o)); },
   close: () => closeSheet(),
   reload: () => load(true),
   login: () => gdLogin(),
@@ -763,6 +828,7 @@ const ACT = {
 document.addEventListener('click', e => { const t = e.target.closest('[data-act]'); if (t && ACT[t.dataset.act]) ACT[t.dataset.act](t); });
 const splashOn = () => { try { return localStorage.getItem('kyou.splash') !== 'off'; } catch (e) { return true; } };
 document.addEventListener('change', e => {
+  if (e.target.id === 'cf-allday') { const tm = $('.cf-tm'); if (tm) tm.hidden = e.target.checked; return; }
   if (e.target.id === 'set-splash') { try { if (e.target.checked) localStorage.removeItem('kyou.splash'); else localStorage.setItem('kyou.splash', 'off'); } catch (err) {} return; }
   if (e.target.id !== 'set-base') return;
   const v = e.target.value.trim(); gdPut({ base: v && v !== DEF_NORIKAE ? v : '', at: '', exp: 0 }); toast('保存しました');
@@ -811,11 +877,12 @@ const hibiSource = {
   todos: () => openTodos().sort((a, b) => (a[0].due || '9999').localeCompare(b[0].due || '9999'))
     .map(([x, , c]) => ({ title: x.title, due: x.due || undefined, dueTime: x.dueTime || undefined, start: x.start || undefined, memo: x.memo || undefined, kind: x.classId ? 'assignment' : 'todo', className: c ? c.name : undefined })),
   entries: () => S.entries || [],
+  addEvent: e => addToHibi(e),
   events: () => S.events.filter(e => e && e.date).map(e => ({ id: e.id, title: e.title, date: e.date, start: e.start, end: e.end, allDay: !!e.allDay, repeat: e.repeat, memo: e.memo })),
 };
 const AIV = { mod: null, engine: null, booting: null, err: '', status: { state: 'uninitialized' }, msgs: [], busy: false, model: null };
 const CONV_KEY = 'mainichi.conv';
-const SUGG = ['今日の予定は？', '次の予定は？', '明日の予定は？', '今日の空き時間は？', 'やることは？', '先週の日記をふりかえって'];
+const SUGG = ['今日の予定は？', '次の予定は？', '明日の予定は？', '今日の空き時間は？', 'やることは？', '明日15時から17時までバイトを追加して', '先週の日記をふりかえって'];
 async function aiBoot() {
   if (AIV.engine) return AIV.engine;
   if (!AIV.booting) AIV.booting = (async () => {
@@ -870,7 +937,21 @@ function aiCardHTML() {
       : c.force ? `<p style="color:var(--sun)">${esc(c.why)}</p><button class="btn" data-act="aiForce">それでも試す</button>` : `<p style="color:var(--sun)">${esc(c.why)}</p>`}</div></div>`;
 }
 function aiPaintCard() { const el = $('#ai-card'); if (el) el.innerHTML = aiCardHTML(); }
-const msgHTML = m => `<div class="msg ${m.who}${m.wait ? ' wait' : ''}${m.err ? ' err' : ''}">${m.tool ? `<span class="tool">${esc(m.tool)}</span>` : ''}${esc(m.text || (m.wait ? '考えています…' : ''))}${(m.src || []).length ? `<span class="src">${m.src.map(c => `<span>${esc(c)}</span>`).join('')}</span>` : ''}</div>`;
+// a write never runs without this: the event to add, editable, with 追加する / やめる
+function aiConfirm(a, call) {
+  return new Promise(resolve => { a.wait = false; a.confirm = { args: call.arguments, resolve }; aiPaintMsgs(true); });
+}
+function confirmHTML(c) {
+  const x = c.args, ad = x.allDay === true || !x.start;
+  return `<div class="cf"><b>ひび手帳にこの予定を追加しますか？</b>
+    <label>名前<input class="inp" id="cf-title" value="${esc(x.title || '')}" maxlength="60"></label>
+    <label>日付<input class="inp" id="cf-date" type="date" value="${esc(x.date || '')}"></label>
+    <label class="cf-ad"><input type="checkbox" id="cf-allday" ${ad ? 'checked' : ''}> 終日</label>
+    <div class="cf-tm" ${ad ? 'hidden' : ''}><input class="inp" id="cf-start" type="time" value="${esc(x.start || '09:00')}"><span>〜</span><input class="inp" id="cf-end" type="time" value="${esc(x.end || '10:00')}"></div>
+    <div class="cf-btns"><button class="btn primary" data-act="aiYes">追加する</button><button class="btn ghost" data-act="aiNo">やめる</button></div>
+    <p>ひび手帳を開くと、ひび手帳の予定に入ります。</p></div>`;
+}
+const msgHTML = m => `<div class="msg ${m.who}${m.wait ? ' wait' : ''}${m.err ? ' err' : ''}${m.confirm ? ' asking' : ''}">${m.tool ? `<span class="tool">${esc(m.tool)}</span>` : ''}${m.confirm ? confirmHTML(m.confirm) : esc(m.text || (m.wait ? '考えています…' : ''))}${(m.src || []).length ? `<span class="src">${m.src.map(c => `<span>${esc(c)}</span>`).join('')}</span>` : ''}</div>`;
 function aiPaintMsgs(stick) {
   const el = $('#ai-msgs'); if (!el) return;
   el.innerHTML = AIV.msgs.map(msgHTML).join('');
@@ -895,7 +976,7 @@ function aiOpen() {
   aiPaintCard(); aiPaintMsgs(true);
   aiBoot().then(() => { aiPaintCard(); aiPaintMsgs(true); }, () => aiPaintCard());
 }
-const TOOL_JA = { hibi_schedule: '予定を確認しました', hibi_next: '次の予定を確認しました', hibi_free_time: '空き時間を計算しました', hibi_todos: 'やることを確認しました' };
+const TOOL_JA = { hibi_add_event: 'ひび手帳への追加', hibi_schedule: '予定を確認しました', hibi_next: '次の予定を確認しました', hibi_free_time: '空き時間を計算しました', hibi_todos: 'やることを確認しました' };
 async function aiAsk(q) {
   if (AIV.busy) return;
   AIV.busy = true;
@@ -904,10 +985,11 @@ async function aiAsk(q) {
   try {
     const e = await aiBoot();
     if (!S) throw Object.assign(new Error(), { code: 'NO_DATA' });
-    for await (const ev of e.streamEvents(q)) {
+    for await (const ev of e.streamEvents(q, { confirmTool: call => aiConfirm(a, call) })) {
       if (ev.type === 'tool_call') a.tool = TOOL_JA[ev.call.name] || 'ひび手帳を調べました';
       else if (ev.type === 'sources') a.src = ev.citations.slice(0, 6).map(c => `${md(c.date)} ${c.type === 'diary' ? '日記' : c.type === 'event' ? '予定' : c.type === 'task' ? 'やること' : 'メモ'}`);
       else if (ev.type === 'answer') { a.wait = false; a.text += ev.text; }
+      else if (ev.type === 'tool_result' && ev.result.name === 'hibi_add_event') a.tool = ev.result.ok ? 'ひび手帳に渡しました' : 'ひび手帳への追加';
       aiPaintMsgs(true);
     }
     if (!a.text) { a.wait = false; a.text = '（止めました）'; }
@@ -927,6 +1009,16 @@ Object.assign(ACT, {
   aiAsk: t => aiAsk(t.dataset.q),
   aiLoad: () => aiLoad(false),
   aiForce: () => aiLoad(true),
+  aiYes: () => {
+    const m = AIV.msgs.find(x => x.confirm); if (!m) return;
+    const v = id => ($('#' + id) || {}).value || '', title = v('cf-title').trim(), date = v('cf-date'), allDay = !!($('#cf-allday') || {}).checked, start = v('cf-start'), end = v('cf-end');
+    if (!title) { toast('名前を入れてください'); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { toast('日付を選んでください'); return; }
+    if (!allDay && (!/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end))) { toast('時刻を選んでください'); return; }
+    const args = m.confirm.args; Object.assign(args, { title, date, allDay }); if (allDay) { delete args.start; delete args.end; } else Object.assign(args, { start, end });
+    const r = m.confirm.resolve; m.confirm = null; m.wait = true; aiPaintMsgs(); r(true);
+  },
+  aiNo: () => { const m = AIV.msgs.find(x => x.confirm); if (!m) return; const r = m.confirm.resolve; m.confirm = null; m.wait = true; aiPaintMsgs(); r(false); },
   aiNew: async () => { if (AIV.busy) return; if (AIV.engine) await AIV.engine.chat.new(); AIV.msgs = []; try { localStorage.removeItem(CONV_KEY); } catch (e) {} aiPaintMsgs(); },
   aiDelete: async () => {
     if (!AIV.engine || !AIV.model) return;
