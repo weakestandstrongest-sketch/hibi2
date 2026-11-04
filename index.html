@@ -191,14 +191,15 @@ svg{display:block}
 .sp-sun{fill:#FFF4EE;transform:translateY(150px);animation:spRise 1s cubic-bezier(.25,.8,.25,1) .45s forwards}
 .sp-halo{opacity:0;animation:spHalo 1.4s ease .5s forwards}
 @keyframes spHalo{0%{opacity:0}50%{opacity:.9}100%{opacity:0}}
-.sp-ray{stroke-dasharray:1;stroke-dashoffset:1;animation:spDraw .3s ease-out forwards}
+/* hidden until it starts drawing: Safari paints the round end of a line that is not drawn yet as a dot */
+.sp-ray{stroke-dasharray:1;stroke-dashoffset:1;opacity:0;animation:spDraw .3s ease-out forwards}
 .sp-low{opacity:.55;transform-box:fill-box;transform-origin:left;transform:scaleX(0);animation:spGrow .35s cubic-bezier(.5,0,.2,1) 1.35s forwards}
 .sp-dot{fill:#232A5C;transform-box:fill-box;transform-origin:center;transform:scale(0);animation:spDot .45s cubic-bezier(.3,1.7,.5,1) 1.55s forwards}
 @keyframes spGrow{to{transform:scaleX(1)}}
 @keyframes spRise{to{transform:none}}
-@keyframes spDraw{to{stroke-dashoffset:0}}
+@keyframes spDraw{0%{stroke-dashoffset:1;opacity:1}100%{stroke-dashoffset:0;opacity:1}}
 @keyframes spDot{0%{transform:scale(0)}60%{transform:scale(1.25)}100%{transform:scale(1)}}
-@media (prefers-reduced-motion:reduce){#splash{animation:none}.sp-star,.sp-halo{display:none}.sp-hz,.sp-sun,.sp-low,.sp-dot{animation:none;transform:none}.sp-ray{animation:none;stroke-dashoffset:0}#splash{transition:opacity .3s}#splash.out{transform:none}}
+@media (prefers-reduced-motion:reduce){#splash{animation:none}.sp-star,.sp-halo{display:none}.sp-hz,.sp-sun,.sp-low,.sp-dot{animation:none;transform:none}.sp-ray{animation:none;stroke-dashoffset:0;opacity:1}#splash{transition:opacity .3s}#splash.out{transform:none}}
 /* bottom bar (from communication) */
 #tabbar{position:fixed;left:0;right:0;bottom:0;z-index:8;display:flex;justify-content:center;padding:0 12px max(10px,env(safe-area-inset-bottom));pointer-events:none}
 /* two tabs only: the bar is two tabs wide (same as iti) */
