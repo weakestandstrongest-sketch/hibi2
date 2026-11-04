@@ -526,12 +526,25 @@ function pendingEvents() {
     .map(([id, e]) => ({ id: 'pend_' + id, title: String(e.title), date: e.date, allDay: !!e.allDay, start: e.start || '09:00', end: e.end || '10:00', color: '#4F8ED6', icon: 'star', repeat: 'none', pending: true,
       ...(e.show === 'cal' ? { calOnly: true } : e.show === 'tl' ? { routine: true } : {}), ...(e.countdown ? { countdown: true } : {}) }));
 }
+const RESCUE_BEFORE = Date.parse('2026-11-05T00:00:00+09:00');
 async function ibCheck() {
-  try { inboxSeen = (await ibRead()).flatMap(f => f.items).filter(it => it && it.kind === 'event'); } catch (e) { return; }
-  // forget what ひび手帳 has taken in (or what is long gone from the inbox)
+  let files;
+  try { files = await ibRead(); } catch (e) { return; }
+  inboxSeen = files.flatMap(f => f.items).filter(it => it && it.kind === 'event');
+  // forget what ひび手帳 has taken in (and, after two weeks, what never made it)
   const still = new Set(inboxSeen.map(it => String(it.id)));
-  const next = sent.filter(x => !inHibi(x.event) && (still.has(x.id) || Date.now() - x.at < 3 * 864e5));
-  if (next.length !== sent.length) { sent = next; lsSet(SENT_KEY, sent); }
+  sent = sent.filter(x => !inHibi(x.event) && Date.now() - x.at < 14 * 864e5);
+  // gone from the inbox but not in ひび手帳: an older ひび手帳 (before 2.28.0) took it out without adding it.
+  // Ask again with a new id (that one remembers the old id as handled). Safe to repeat: ひび手帳 skips an event it already has.
+  // only requests made before ひび手帳 2.28.0 was out, and only once each (after that, a missing one may simply have been renamed in ひび手帳)
+  const lost = sent.filter(x => !x.re && x.at < RESCUE_BEFORE && !still.has(x.id) && Date.now() - x.at > 10 * 60000);
+  if (lost.length) {
+    const items = files.flatMap(f => f.items);
+    for (const x of lost) { x.id = 'mn-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); x.re = Date.now(); items.push({ id: x.id, kind: 'event', by: 'mainichi', createdAt: new Date().toISOString(), event: x.event }); }
+    try { await gdWrite(IB_FILE, JSON.stringify({ app: 'hibi-inbox', version: 1, savedAt: new Date().toISOString(), by: 'mainichi', items }), files.length ? files[0].id : ''); inboxSeen = items.filter(it => it && it.kind === 'event'); }
+    catch (e) { /* next time */ }
+  }
+  lsSet(SENT_KEY, sent);
 }
 
 /* ================= loading ================= */
