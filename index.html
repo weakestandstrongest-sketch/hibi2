@@ -234,7 +234,11 @@ svg{display:block}
 .cf label{display:block;font-size:12px;font-weight:700;color:var(--ink-2);margin-top:8px}
 .cf .inp{display:block;width:100%;margin-top:4px;padding:9px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--bg);font-size:16px;color:var(--ink)}
 .cf .cf-ad{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--ink)}
-.cf .cf-ad input{width:20px;height:20px;accent-color:var(--accent)}
+.cf .cf-ad input{flex:none;width:20px;height:20px;accent-color:var(--accent)}
+.cf .cf-sub{margin:5px 2px 0;font-size:11.5px;color:var(--ink-3)}
+.seg{display:flex;gap:4px;margin-top:4px;padding:3px;border-radius:12px;background:var(--bg);box-shadow:inset 0 0 0 1.5px var(--line)}
+.seg button{flex:1;min-width:0;padding:8px 2px;border-radius:9px;font-size:13px;font-weight:700;color:var(--ink-2);text-align:center;white-space:nowrap}
+.seg button[aria-checked="true"]{background:var(--accent);color:#fff}
 .cf-tm{display:flex;align-items:center;gap:8px;margin-top:8px}
 .cf-tm .inp{margin:0;min-width:0;flex:1}
 .cf-btns{display:flex;gap:8px;margin-top:12px}
@@ -501,7 +505,8 @@ let inboxSeen = []; // the まいにち items still in the drive's inbox, from t
 async function addToHibi(e) {
   if (!gd.rt) throw new Error('Googleにログインしていないため、ひび手帳に渡せません（「今日」の画面からログインしてください）');
   const item = { id: 'mn-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), kind: 'event', by: 'mainichi', createdAt: new Date().toISOString(),
-    event: { title: e.title, date: e.date, allDay: !!e.allDay, ...(e.allDay ? {} : { start: e.start, end: e.end }) } };
+    event: { title: e.title, date: e.date, allDay: !!e.allDay, ...(e.allDay ? {} : { start: e.start, end: e.end }), show: e.show === 'cal' || e.show === 'tl' ? e.show : 'both',
+      ...(e.countdown ? { countdown: true } : {}), ...(typeof e.chrOn === 'boolean' ? { chrOn: e.chrOn } : {}) } };
   const files = await ibRead(), items = [...files.flatMap(f => f.items), item];
   await gdWrite(IB_FILE, JSON.stringify({ app: 'hibi-inbox', version: 1, savedAt: new Date().toISOString(), by: 'mainichi', items }), files.length ? files[0].id : '');
   sent.push({ id: item.id, event: item.event, at: Date.now() }); lsSet(SENT_KEY, sent);
@@ -518,7 +523,8 @@ function pendingEvents() {
   for (const x of sent) map.set(x.id, x.event);
   for (const it of inboxSeen) if (it && it.kind === 'event' && it.event) map.set(String(it.id), it.event);
   return [...map.entries()].filter(([, e]) => e && /^\d{4}-\d{2}-\d{2}$/.test(e.date) && !inHibi(e))
-    .map(([id, e]) => ({ id: 'pend_' + id, title: String(e.title), date: e.date, allDay: !!e.allDay, start: e.start || '09:00', end: e.end || '10:00', color: '#4F8ED6', icon: 'star', repeat: 'none', pending: true }));
+    .map(([id, e]) => ({ id: 'pend_' + id, title: String(e.title), date: e.date, allDay: !!e.allDay, start: e.start || '09:00', end: e.end || '10:00', color: '#4F8ED6', icon: 'star', repeat: 'none', pending: true,
+      ...(e.show === 'cal' ? { calOnly: true } : e.show === 'tl' ? { routine: true } : {}), ...(e.countdown ? { countdown: true } : {}) }));
 }
 async function ibCheck() {
   try { inboxSeen = (await ibRead()).flatMap(f => f.items).filter(it => it && it.kind === 'event'); } catch (e) { return; }
@@ -828,6 +834,7 @@ const ACT = {
 document.addEventListener('click', e => { const t = e.target.closest('[data-act]'); if (t && ACT[t.dataset.act]) ACT[t.dataset.act](t); });
 const splashOn = () => { try { return localStorage.getItem('kyou.splash') !== 'off'; } catch (e) { return true; } };
 document.addEventListener('change', e => {
+  if (e.target.id === 'cf-chr') { const m = AIV.msgs.find(x => x.confirm); if (m) m.confirm.chrTouched = true; return; }
   if (e.target.id === 'cf-allday') { const tm = $('.cf-tm'); if (tm) tm.hidden = e.target.checked; return; }
   if (e.target.id === 'set-splash') { try { if (e.target.checked) localStorage.removeItem('kyou.splash'); else localStorage.setItem('kyou.splash', 'off'); } catch (err) {} return; }
   if (e.target.id !== 'set-base') return;
@@ -937,6 +944,8 @@ function aiCardHTML() {
       : c.force ? `<p style="color:var(--sun)">${esc(c.why)}</p><button class="btn" data-act="aiForce">それでも試す</button>` : `<p style="color:var(--sun)">${esc(c.why)}</p>`}</div></div>`;
 }
 function aiPaintCard() { const el = $('#ai-card'); if (el) el.innerHTML = aiCardHTML(); }
+// the same words as ひび手帳's 予定の画面
+const SHOW_JA = { both: 'カレンダーとタイムラインの両方に出します', cal: 'カレンダーにだけ出します（タイムラインには出ません）', tl: 'ルーティン：タイムラインにだけ出します' };
 // a write never runs without this: the event to add, editable, with 追加する / やめる
 function aiConfirm(a, call) {
   return new Promise(resolve => { a.wait = false; a.confirm = { args: call.arguments, resolve }; aiPaintMsgs(true); });
@@ -948,6 +957,11 @@ function confirmHTML(c) {
     <label>日付<input class="inp" id="cf-date" type="date" value="${esc(x.date || '')}"></label>
     <label class="cf-ad"><input type="checkbox" id="cf-allday" ${ad ? 'checked' : ''}> 終日</label>
     <div class="cf-tm" ${ad ? 'hidden' : ''}><input class="inp" id="cf-start" type="time" value="${esc(x.start || '09:00')}"><span>〜</span><input class="inp" id="cf-end" type="time" value="${esc(x.end || '10:00')}"></div>
+    <label>表示する場所</label>
+    <div class="seg" role="radiogroup">${[['both', '両方'], ['cal', 'カレンダー'], ['tl', 'タイムライン']].map(([k, l]) => `<button type="button" role="radio" data-act="cfShow" data-k="${k}" aria-checked="${(x.show || 'both') === k}">${l}</button>`).join('')}</div>
+    <p class="cf-sub" id="cf-show">${SHOW_JA[x.show || 'both']}</p>
+    <label class="cf-ad"><input type="checkbox" id="cf-cd" ${x.countdown ? 'checked' : ''}> カウントダウン（あと◯日）</label>
+    <label class="cf-ad"><input type="checkbox" id="cf-chr" ${(typeof x.chrOn === 'boolean' ? x.chrOn : x.show !== 'tl') ? 'checked' : ''}> 刻に出す</label>
     <div class="cf-btns"><button class="btn primary" data-act="aiYes">追加する</button><button class="btn ghost" data-act="aiNo">やめる</button></div>
     <p>ひび手帳を開くと、ひび手帳の予定に入ります。</p></div>`;
 }
@@ -1015,8 +1029,16 @@ Object.assign(ACT, {
     if (!title) { toast('名前を入れてください'); return; }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { toast('日付を選んでください'); return; }
     if (!allDay && (!/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end))) { toast('時刻を選んでください'); return; }
-    const args = m.confirm.args; Object.assign(args, { title, date, allDay }); if (allDay) { delete args.start; delete args.end; } else Object.assign(args, { start, end });
+    const args = m.confirm.args, show = args.show === 'cal' || args.show === 'tl' ? args.show : 'both', chr = !!($('#cf-chr') || {}).checked;
+    Object.assign(args, { title, date, allDay, show, countdown: !!($('#cf-cd') || {}).checked }); if (allDay) { delete args.start; delete args.end; } else Object.assign(args, { start, end });
+    if (chr === (show !== 'tl')) delete args.chrOn; else args.chrOn = chr; // kept only when it differs from ひび手帳's usual
     const r = m.confirm.resolve; m.confirm = null; m.wait = true; aiPaintMsgs(); r(true);
+  },
+  // 表示する場所: 刻に出す follows ひび手帳's usual (on unless timeline-only) until it is changed by hand
+  cfShow: t => {
+    const m = AIV.msgs.find(x => x.confirm); if (!m) return; const a = m.confirm.args, k = t.dataset.k;
+    const chr = $('#cf-chr'); if (chr && !m.confirm.chrTouched) chr.checked = k !== 'tl';
+    a.show = k; const sub = $('#cf-show'); if (sub) sub.textContent = SHOW_JA[k]; document.querySelectorAll('.seg [data-act=cfShow]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.k === k)));
   },
   aiNo: () => { const m = AIV.msgs.find(x => x.confirm); if (!m) return; const r = m.confirm.resolve; m.confirm = null; m.wait = true; aiPaintMsgs(); r(false); },
   aiNew: async () => { if (AIV.busy) return; if (AIV.engine) await AIV.engine.chat.new(); AIV.msgs = []; try { localStorage.removeItem(CONV_KEY); } catch (e) {} aiPaintMsgs(); },

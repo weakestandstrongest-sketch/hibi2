@@ -55,6 +55,12 @@ export interface NewEvent {
   allDay: boolean;
   start?: string; // HH:MM
   end?: string;
+  /** 表示する場所: both = カレンダーとタイムライン, cal = カレンダーだけ, tl = タイムラインだけ（ルーティン） */
+  show?: "both" | "cal" | "tl";
+  /** カレンダーの上に「あと◯日」を出す */
+  countdown?: boolean;
+  /** 刻に出す（省略：ひび手帳の決まりどおり。タイムラインだけの予定は出さない） */
+  chrOn?: boolean;
 }
 /** What the page gives the AI: views over ひび手帳's data, and a way to ask ひび手帳 to add an event. */
 export interface HibiSource {
@@ -277,6 +283,8 @@ export function parseAdd(question: string, ctx: ToolContext): NewEvent | undefin
   });
   // the name: what is left once the request words and particles are gone
   const title = q
+    .replace(/(を|は)?\s*(カレンダー|タイムライン)(に)?(だけ|のみ)(に|で)?/g, " ")
+    .replace(/(を|で|と)?\s*カウントダウン(も|を)?(して|する|つき|付き)?(で|の)?/g, " ")
     .replace(/(という|って)?(の)?予定(を|に)?/g, " ")
     .replace(/(を|に)?\s*(追加|入れ|いれ|登録|作っ|つくっ)[^\s]*$/, " ")
     .replace(/[、。!?！？]/g, " ")
@@ -284,11 +292,18 @@ export function parseAdd(question: string, ctx: ToolContext): NewEvent | undefin
     .replace(/(\s*(に|で|は|を|の)\s*)+$/, "")
     .replace(/\s+/g, " ").trim();
   if (!title || title.length > 40) return undefined;
-  if (!times.length) return { title, date, allDay: true };
+  const extra: Pick<NewEvent, "show" | "countdown"> = {
+    ...(/カレンダー(に)?だけ|カレンダーのみ/.test(question) ? { show: "cal" as const } : /タイムライン(に)?だけ|タイムラインのみ|ルーティン/.test(question) ? { show: "tl" as const } : {}),
+    ...(/カウントダウン/.test(question) ? { countdown: true } : {}),
+  };
+  if (!times.length) return { title, date, allDay: true, ...extra };
   const s0 = times[0]!, e0 = times[1] !== undefined && times[1] > s0 ? times[1] : Math.min(s0 + 60, 23 * 60 + 59);
-  return { title, date, allDay: false, start: `${pad(Math.floor(s0 / 60))}:${pad(s0 % 60)}`, end: `${pad(Math.floor(e0 / 60))}:${pad(e0 % 60)}` };
+  return { title, date, allDay: false, start: `${pad(Math.floor(s0 / 60))}:${pad(s0 % 60)}`, end: `${pad(Math.floor(e0 / 60))}:${pad(e0 % 60)}`, ...extra };
 }
-const eventLabel = (e: NewEvent) => `${dayJa(e.date)} ${e.allDay ? "終日" : `${hm(e.start!)}〜${hm(e.end!)}`}`;
+const eventLabel = (e: NewEvent) => {
+  const opts = [e.show === "cal" ? "カレンダーだけ" : e.show === "tl" ? "タイムラインだけ" : "", e.countdown ? "カウントダウン" : "", e.chrOn === true && e.show === "tl" ? "刻にも出す" : e.chrOn === false && e.show !== "tl" ? "刻には出さない" : ""].filter(Boolean);
+  return `${dayJa(e.date)} ${e.allDay ? "終日" : `${hm(e.start!)}〜${hm(e.end!)}`}${opts.length ? `（${opts.join("・")}）` : ""}`;
+};
 
 function addTool(src: HibiSource): AITool<NewEvent & Record<string, unknown>, NewEvent> {
   return {
@@ -304,6 +319,9 @@ function addTool(src: HibiSource): AITool<NewEvent & Record<string, unknown>, Ne
         allDay: { type: "boolean", description: "終日の予定なら true" },
         start: { type: "string", description: "開始 HH:MM（終日なら省略）" },
         end: { type: "string", description: "終了 HH:MM（終日なら省略）" },
+        show: { type: "string", enum: ["both", "cal", "tl"], description: "表示する場所：both（両方）、cal（カレンダーだけ）、tl（タイムラインだけ）" },
+        countdown: { type: "boolean", description: "カレンダーの上に「あと◯日」を出すなら true" },
+        chrOn: { type: "boolean", description: "刻に出すかどうか（任意）" },
       },
       required: ["title", "date"],
     },
@@ -318,7 +336,9 @@ function addTool(src: HibiSource): AITool<NewEvent & Record<string, unknown>, Ne
     async execute(args) {
       const date = String(args.date ?? ""), allDay = args.allDay === true || !args.start;
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("日付が正しくありません");
-      const e: NewEvent = { title: String(args.title ?? "").trim().slice(0, 60), date, allDay, ...(allDay ? {} : { start: String(args.start), end: String(args.end || args.start) }) };
+      const show = args.show === "cal" || args.show === "tl" ? args.show : "both";
+      const e: NewEvent = { title: String(args.title ?? "").trim().slice(0, 60), date, allDay, ...(allDay ? {} : { start: String(args.start), end: String(args.end || args.start) }),
+        show, ...(args.countdown === true ? { countdown: true } : {}), ...(typeof args.chrOn === "boolean" ? { chrOn: args.chrOn } : {}) };
       if (!e.title) throw new Error("予定の名前がありません");
       if (!allDay && !(/^([01]\d|2[0-3]):[0-5]\d$/.test(e.start!) && /^([01]\d|2[0-3]):[0-5]\d$/.test(e.end!))) throw new Error("時刻が正しくありません");
       return src.addEvent(e);
