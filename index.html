@@ -452,7 +452,7 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); retu
 let gd = lsGet(GD_KEY) || {};
 const gdPut = o => { gd = { ...gd, ...o }; lsSet(GD_KEY, gd); };
 // what the timeline and the AI need (the diary's words only: no photos, no songs)
-const DATA_V = 5;
+const DATA_V = 6;
 let D = lsGet(DATA_KEY); // { S, at (when hibi.json was saved), got (when we read it), src, fid, v }
 const pickMoney = m => {
   m = m && typeof m === 'object' ? m : {};
@@ -493,7 +493,7 @@ const pick = (s, o) => ({
   events: Array.isArray(s.events) ? s.events : [],
   todos: Array.isArray(s.todos) ? s.todos : [],
   school: s.school && typeof s.school === 'object' ? s.school : {},
-  settings: { holidays: !s.settings || s.settings.holidays !== false, weekStart: s.settings && s.settings.weekStart === 'sun' ? 'sun' : 'mon', theme: s.settings && s.settings.theme, accent: s.settings && s.settings.accent, norikae: s.settings && s.settings.norikae },
+  settings: { holidays: !s.settings || s.settings.holidays !== false, weekStart: s.settings && s.settings.weekStart === 'sun' ? 'sun' : 'mon', nagi: s.settings && s.settings.nagi, baseball: s.settings && s.settings.baseball, theme: s.settings && s.settings.theme, accent: s.settings && s.settings.accent, norikae: s.settings && s.settings.norikae },
 });
 let S = D && D.S ? D.S : null;
 
@@ -995,6 +995,24 @@ const hibiSource = {
     finally { clearTimeout(to); }
   },
   routeContext: () => AIV.rt ? { result: AIV.rt, selected: AIV.rtSel || 0 } : null,
+  async fetchJSON(url) {
+    const ac = new AbortController(), to = setTimeout(() => ac.abort(), 20000);
+    try { const r = await fetch(url, { signal: ac.signal, cache: 'no-store' }), j = await r.json().catch(() => null); if (!r.ok || !j) throw new Error((j && j.error) || `つながりませんでした（${r.status}）`); return j; }
+    catch (e) { throw new Error(e.name === 'AbortError' ? '応答がありませんでした' : e.message === 'Failed to fetch' ? 'つながりませんでした' : e.message); }
+    finally { clearTimeout(to); }
+  },
+  // the same addresses as ひび手帳's 設定 → 凪 / 野球速報
+  appUrl: app => { const u = S && S.settings && S.settings[app]; return /^https:\/\//.test(u || '') ? u : app === 'nagi' ? 'https://weakestandstrongest-sketch.github.io/news/' : 'https://baseball.gohanoishi.workers.dev'; },
+  // where the weather is for: the last place recorded (ひび手帳 / move), else this phone's location
+  async where() {
+    const pts = ((S && S.more && S.more.places) || []).filter(p => p && +p.t > 0 && Number.isFinite(+p.lat) && Number.isFinite(+p.lng));
+    const last = pts.sort((a, b) => b.t - a.t)[0];
+    const spotNear = (lat, lng) => ((S.more && S.more.spots) || []).filter(x => x && x.name).map(x => [x, Math.hypot((x.lat - lat) * 111000, (x.lng - lng) * 91000)]).sort((a, b) => a[1] - b[1]).find(x => x[1] < 300);
+    if (last && Date.now() - last.t < 3 * 864e5) { const sp = spotNear(+last.lat, +last.lng); return { lat: +last.lat, lng: +last.lng, ...(sp ? { name: sp[0].name } : {}) }; }
+    const pos = await new Promise(res => { if (!navigator.geolocation) return res(null); navigator.geolocation.getCurrentPosition(p => res(p.coords), () => res(null), { timeout: 10000, maximumAge: 30 * 60000 }); });
+    if (pos) return { lat: pos.latitude, lng: pos.longitude };
+    return last ? { lat: +last.lat, lng: +last.lng } : null;
+  },
   more: () => S.more || {},
   weekStartsSunday: () => !!(S.settings && S.settings.weekStart === 'sun'),
   school: () => S.school || {},
@@ -1005,7 +1023,7 @@ const CONV_KEY = 'mainichi.conv';
 // what is left of a follow-up once the words of a period and of small talk are taken out: nothing (or a letter) for a real follow-up
 const FOLLOW_WORDS = /今日|きょう|明日|あした|昨日|きのう|明後日|あさって|一昨日|おととい|今週|来週|先週|再来週|今月|来月|先月|今年|来年|去年|昨年|[0-9０-９]+|[一二三四五六七八九十]+|年|月|日|週|曜日?|[月火水木金土]曜|半|時|分|から|まで|の|は|で|が|に|と|も|って|なら|だと|だったら|では|じゃあ|じゃ|あ|え|ね|よ|か|かな|？|\?|！|!|、|。|,|\.|\s/g;
 const isFollowUp = q => q.length <= 30 && /[0-9０-９]|今日|きょう|明日|あした|昨日|きのう|明後日|あさって|一昨日|おととい|週|月|年|曜/.test(q) && q.replace(FOLLOW_WORDS, '').length <= 1 && !/日記|メモ|記事|ニュース|天気|場所|曲|気持ち|予定を|追加|入れて/.test(q);
-const SUGG = ['今日の予定は？', '次の予定は？', '明日の予定は？', '今日の空き時間は？', 'やることは？', '明日15時から17時までバイトを追加して', '名古屋から岐阜までの経路を調べて', '先週の日記をふりかえって'];
+const SUGG = ['今日の予定は？', '次の予定は？', '明日の予定は？', '今日の空き時間は？', 'やることは？', '明日15時から17時までバイトを追加して', '名古屋から岐阜までの経路を調べて', '今日のニュースは？', '今日の天気は？', '先週の日記をふりかえって'];
 async function aiBoot() {
   if (AIV.engine) return AIV.engine;
   if (!AIV.booting) AIV.booting = (async () => {
@@ -1124,7 +1142,7 @@ function aiOpen() {
   aiPaintCard(); aiPaintMsgs(true);
   aiBoot().then(() => { aiPaintCard(); aiPaintMsgs(true); }, () => aiPaintCard());
 }
-const TOOL_JA = { hibi_route: 'のりかえで調べました', hibi_route_change: 'のりかえで経路を変えました', hibi_add_event: 'ひび手帳への追加', hibi_money: '家計簿を計算しました', hibi_habits: '習慣の記録を数えました', hibi_attendance: '出席を数えました', hibi_schedule: '予定を確認しました', hibi_next: '次の予定を確認しました', hibi_free_time: '空き時間を計算しました', hibi_todos: 'やることを確認しました' };
+const TOOL_JA = { hibi_news: '凪から取ってきました', hibi_baseball: '野球速報から取ってきました', hibi_weather: '天気を調べました', hibi_route: 'のりかえで調べました', hibi_route_change: 'のりかえで経路を変えました', hibi_add_event: 'ひび手帳への追加', hibi_money: '家計簿を計算しました', hibi_habits: '習慣の記録を数えました', hibi_attendance: '出席を数えました', hibi_schedule: '予定を確認しました', hibi_next: '次の予定を確認しました', hibi_free_time: '空き時間を計算しました', hibi_todos: 'やることを確認しました' };
 async function aiAsk(q) {
   if (AIV.busy) return;
   AIV.busy = true;

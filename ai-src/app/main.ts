@@ -80,6 +80,12 @@ export interface HibiSource {
   addEvent(e: NewEvent): Promise<NewEvent>;
   /** のりかえ（乗換案内）の API を呼ぶ：/api/search・/api/timetable・/api/train */
   nk(path: string, params: Record<string, string>): Promise<any>;
+  /** よそのデータを JSON で取ってくる（凪・野球速報・天気） */
+  fetchJSON(url: string): Promise<any>;
+  /** ひび手帳の設定にある、凪・野球速報の URL */
+  appUrl(app: "nagi" | "baseball"): string;
+  /** いまいる場所（場所の記録の最後、なければ端末の位置情報） */
+  where(): Promise<{ lat: number; lng: number; name?: string } | null>;
   /** いま会話に出ている経路（調べた・変えた最後のもの）と、選んでいる番号 */
   routeContext(): { result: RouteResult; selected: number } | null;
   /** ひび手帳の家計簿（支出・収入の記録とカテゴリー） */
@@ -595,6 +601,169 @@ function routeChangeTool(src: HibiSource): AITool<ChangeArgs & Record<string, un
   };
 }
 
+/** 「今日（11月4日(水)）」, but a label that is already a date is said once */
+const whenJa = (label: string, d: string) => (/^(今日|明日|昨日|あさって|おととい|明後日|一昨日)$/.test(label) ? `${label}（${dayJa(d)}）` : dayJa(d));
+// ---------------------------------------------------------------- 凪（ニュース）
+const NEWS_Q = /ニュース|凪|話題|報道|見出し|トップ記事|最新の記事/;
+interface NewsArticle { id: string; title: string; url: string; source: string; publishedAt: string; summary?: string; topic?: string; paid?: unknown; memberOnly?: unknown }
+interface NewsArgs { text: string; nth?: number }
+const timeJa = (iso: string) => { const d = new Date(iso); return Number.isNaN(+d) ? "" : `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${pad(d.getMinutes())}`; };
+function newsTool(src: HibiSource, mem: { list: NewsArticle[] }): AITool<NewsArgs & Record<string, unknown>, string> {
+  return {
+    name: "hibi_news",
+    description: "凪（ニュース）から、今日の主なニュース・カテゴリー・言葉で探したニュース・話題を出す",
+    access: "read",
+    whenToUse: [NEWS_Q],
+    answersWithoutRecords: true,
+    parameters: { type: "object", properties: { text: { type: "string" }, nth: { type: "integer" } }, required: ["text"] },
+    route(question) {
+      const q = question.split(FOLLOW)[0]!.normalize("NFKC");
+      // 「2つ目を詳しく」: the list shown last
+      const n = q.match(/([1-9１-９①-⑨一二三四五六七八九])\s*(つ目|番目|番|個目)?(の(ニュース|記事))?(を|の)?\s*(詳しく|くわしく|概要|内容|中身|教えて)/);
+      if (n && mem.list.length) { const c = n[1]!; const k = "一二三四五六七八九".indexOf(c) >= 0 ? "一二三四五六七八九".indexOf(c) : "①②③④⑤⑥⑦⑧⑨".indexOf(c) >= 0 ? "①②③④⑤⑥⑦⑧⑨".indexOf(c) : +c.normalize("NFKC") - 1; return { text: q, nth: k }; }
+      if (!NEWS_Q.test(q) || /保存|しおり|ブックマーク|メモした/.test(q)) return undefined; // saved articles: from the records
+      return { text: q };
+    },
+    formatAnswer(result) { return result.ok ? result.value : `ニュースを取ってこられませんでした（${result.error}）。`; },
+    async execute(a) {
+      if (a.nth !== undefined) {
+        const x = mem.list[a.nth]; if (!x) throw new Error("その番号のニュースはありません");
+        return `${x.title}\n（${x.source}・${timeJa(x.publishedAt)}）\n\n${x.summary || "概要はありません。"}\n\n${x.url}`;
+      }
+      const base = src.appUrl("nagi").replace(/\/+$/, "");
+      const d = await src.fetchJSON(`${base}/data/news.json`);
+      const cats: Array<{ id: string; label: string; articles: NewsArticle[] }> = arr(d?.categories);
+      const all = [...new Map(cats.flatMap((c) => arr(c.articles)).map((x: NewsArticle) => [x.id, x])).values()] as NewsArticle[];
+      if (!all.length) throw new Error("凪にニュースがありません");
+      const q = a.text, upd = d.generatedAt ? `（凪の更新：${timeJa(d.generatedAt)}）` : "";
+      const show = (head: string, list: NewsArticle[]) => {
+        mem.list = list.slice(0, 8);
+        return `${head}${upd}\n${mem.list.map((x, i) => `${"①②③④⑤⑥⑦⑧"[i]} ${x.title}（${x.source}${x.publishedAt ? `・${timeJa(x.publishedAt)}` : ""}）`).join("\n")}\n\n「2つ目を詳しく」のように聞くと、概要を出します。`;
+      };
+      // 話題：同じ出来事を報じた社の多い順
+      if (/話題|トピック|注目|いま何が/.test(q)) {
+        const byId = new Map(all.map((x) => [x.id, x]));
+        const tops = arr(d.topics).sort((p: any, r: any) => arr(r.sources).length - arr(p.sources).length).slice(0, 8)
+          .map((t: any) => { const x = byId.get(arr(t.articleIds)[0]); return x ? { ...x, source: `${arr(t.sources).length}社が報道` } : null; }).filter(Boolean) as NewsArticle[];
+        if (tops.length) return show("いま多くのメディアが報じている話題です。", tops);
+      }
+      // a category named: 「ビジネスのニュース」「スポーツ」
+      const cat = cats.find((c) => c.label && c.id !== "top" && (q.includes(c.label) || c.label.split(/[・/]/).some((w) => w.length >= 2 && q.includes(w))));
+      if (cat) return show(`凪の「${cat.label}」のニュースです。`, arr(cat.articles));
+      // words to look for: 「円安」, 「円安のニュース」
+      const words = [...q.matchAll(/[「『]([^」』]{1,20})[」』]/g)].map((x) => x[1]!).concat((q.match(/([^\s、。,「」]{2,12}?)(に関する|についての|の|って)(ニュース|記事|話題)/) ?? [])[1] ?? []).filter((w) => !/今日|最新|きょう|主な|凪|最近/.test(w));
+      if (words.length) {
+        const hit = all.filter((x) => words.some((w) => `${x.title} ${x.summary ?? ""}`.includes(w))).sort((p, r) => r.publishedAt.localeCompare(p.publishedAt));
+        return hit.length ? show(`「${words.join("」「")}」のニュースです。`, hit) : `凪のいまのニュースに「${words.join("」「")}」は見つかりませんでした。${upd}`;
+      }
+      const top = cats.find((c) => c.id === "top") ?? cats[0]!;
+      return show("凪のトップのニュースです。", arr(top.articles));
+    },
+  };
+}
+
+// ---------------------------------------------------------------- 野球速報
+const NPB_TEAMS: string[][] = [["巨人", "ジャイアンツ", "読売"], ["阪神", "タイガース"], ["中日", "ドラゴンズ"], ["DeNA", "ベイスターズ", "横浜"], ["広島", "カープ"], ["ヤクルト", "スワローズ"],
+  ["ソフトバンク", "ホークス"], ["日本ハム", "ファイターズ", "日ハム"], ["ロッテ", "マリーンズ"], ["楽天", "イーグルス"], ["西武", "ライオンズ"], ["オリックス", "バファローズ"]];
+const MLB_Q = /MLB|メジャー|大リーグ|ドジャース|ヤンキース|カブス|エンゼルス|パドレス|メッツ|マリナーズ|大谷|山本由伸|ダルビッシュ|鈴木誠也|今永/;
+const BB_Q = /野球|プロ野球|NPB|試合|順位|何位|首位|スコア|先発|セ・?リーグ|パ・?リーグ|日本シリーズ|クライマックス|交流戦/;
+interface BBArgs { mode: "games" | "standings"; mlb: boolean; npb: boolean; teams: string[]; date: string; label: string }
+function baseballTool(src: HibiSource): AITool<BBArgs & Record<string, unknown>, string> {
+  return {
+    name: "hibi_baseball",
+    description: "野球速報から、NPB・MLB の試合の結果と速報、順位を出す",
+    access: "read",
+    whenToUse: [BB_Q, MLB_Q],
+    answersWithoutRecords: true,
+    parameters: { type: "object", properties: { mode: { type: "string" }, mlb: { type: "boolean" }, npb: { type: "boolean" }, teams: { type: "array", items: { type: "string" } }, date: { type: "string" }, label: { type: "string" } }, required: ["mode"] },
+    route(question, ctx) {
+      const q = question.normalize("NFKC");
+      const teams = NPB_TEAMS.filter((al) => al.some((w) => q.includes(w))).map((al) => al[0]!);
+      const mlb = MLB_Q.test(q), game = /試合|勝っ|負け|勝ち|勝敗|スコア|何対|何-何|結果|先発|速報|点|順位|何位|首位|どう(だった|なってる)/.test(q);
+      if (!BB_Q.test(q) && !((teams.length || mlb) && game)) return undefined;
+      if (/予定を|追加|入れて|日記/.test(q)) return undefined;
+      const d = daysOf(q, ctx); if (d && d.from !== d.to) return undefined;
+      return { mode: /順位|何位|首位|ゲーム差|勝率/.test(q) ? "standings" : "games", mlb, npb: !mlb || teams.length > 0 || /NPB|プロ野球|セ|パ/.test(q), teams, date: d ? d.from : today(ctx), label: d ? d.label : "今日" };
+    },
+    formatAnswer(result) { return result.ok ? result.value : `野球速報を取ってこられませんでした（${result.error}）。`; },
+    async execute(a) {
+      const base = src.appUrl("baseball").replace(/\/+$/, "");
+      if (a.mode === "standings") {
+        const out: string[] = [];
+        const col = (h: string[], re: RegExp) => h.findIndex((x) => re.test(x));
+        const table = (name: string, t: any) => {
+          const h: string[] = arr(t?.headers), iR = col(h, /^順位$/), iT = col(h, /チーム|球団/), iW = col(h, /^(勝|勝利|勝数)$/), iL = col(h, /^(敗|敗戦|敗数)$/), iD = col(h, /^(引分|分)$/), iP = col(h, /勝率/), iG = col(h, /^(差|勝差|ゲーム差)$/);
+          const v = (c: any[], i: number) => (i >= 0 ? String(c[i] ?? "").trim() : "");
+          return `${name}\n${arr(t?.rows).map((r: any) => { const c = arr(r.cells); return `${v(c, iR) || "・"} ${v(c, iT) || r.team?.name || ""}　${v(c, iW)}勝${v(c, iL)}敗${v(c, iD) ? v(c, iD) + "分" : ""}${v(c, iP) ? ` 勝率${v(c, iP)}` : ""}${v(c, iG) && v(c, iG) !== "-" ? ` 差${v(c, iG)}` : ""}`; }).join("\n")}`;
+        };
+        if (a.npb) {
+          const j = await src.fetchJSON(`${base}/api/npb/standings`);
+          for (const [k, name] of [["C", "セ・リーグ"], ["P", "パ・リーグ"]] as const) { const t = arr(j?.[k]?.tables).find((x: any) => x.kind === "standings") ?? arr(j?.[k]?.tables)[0]; if (t) out.push(table(name, t)); }
+        }
+        if (a.mlb) {
+          const j = await src.fetchJSON(`${base}/api/mlb/standings`);
+          for (const lg of ["AL", "NL"]) for (const dv of arr(j?.[lg])) out.push(table(`${lg === "AL" ? "ア・リーグ" : "ナ・リーグ"} ${dv.name ?? ""}`, dv));
+        }
+        if (!out.length) throw new Error("順位表がありませんでした");
+        const pick = a.teams.length ? out.filter((t) => a.teams.some((n) => t.includes(n))) : out;
+        return `いまの順位です（野球速報）。\n\n${(pick.length ? pick : out).join("\n\n")}`;
+      }
+      const games: any[] = [];
+      if (a.npb) games.push(...arr((await src.fetchJSON(`${base}/api/npb/schedule?date=${a.date}`))?.games));
+      if (a.mlb) games.push(...arr((await src.fetchJSON(`${base}/api/mlb/schedule?date=${a.date}`))?.games));
+      const al = NPB_TEAMS.filter((x) => a.teams.includes(x[0]!));
+      const mine = al.length ? games.filter((g) => [g.home, g.away].some((t) => al.some((x) => x.some((w) => `${t?.name ?? ""}${t?.full ?? ""}`.includes(w))))) : games;
+      if (!mine.length) return `${whenJa(a.label, a.date)}は、${al.length ? `${al.map((x) => x[0]).join("・")}の` : ""}試合はありません。`;
+      const line = (g: any) => {
+        const sc = g.away?.score != null && g.home?.score != null && g.status !== "pre" ? ` ${g.away.score} - ${g.home.score} ` : " - ";
+        const st = g.status === "pre" ? `${g.startTime ? `${g.startTime}開始` : "試合前"}` : g.statusText || "";
+        let res = "";
+        if (al.length === 1 && g.status === "final") {
+          const me = [g.home, g.away].find((t) => al[0]!.some((w) => `${t?.name ?? ""}${t?.full ?? ""}`.includes(w))), you = me === g.home ? g.away : g.home;
+          if (me && you && me.score != null) res = me.score > you.score ? `\n　→ ${al[0]![0]}の勝ち` : me.score < you.score ? `\n　→ ${al[0]![0]}の負け` : "\n　→ 引き分け";
+        }
+        return `・${g.away?.name ?? "?"}${sc}${g.home?.name ?? "?"}（${st}${g.venue ? `・${g.venue}` : ""}）${arr(g.notes).length ? `\n　${arr(g.notes).join("　")}` : ""}${res}`;
+      };
+      return `${whenJa(a.label, a.date)}の試合です（野球速報）。\n${mine.map(line).join("\n")}`;
+    },
+  };
+}
+
+// ---------------------------------------------------------------- 天気 (Open-Meteo, as ひび手帳)
+const WX_Q = /天気|気温|雨|傘|晴れ|曇|くもり|暑い|寒い|降る|降水|雪|風が/;
+function weatherTool(src: HibiSource): AITool<{ date: string; label: string } & Record<string, unknown>, string> {
+  return {
+    name: "hibi_weather",
+    description: "いまいる場所の天気・気温・雨の予報（Open-Meteo）",
+    access: "read",
+    whenToUse: [WX_Q],
+    answersWithoutRecords: true,
+    parameters: { type: "object", properties: { date: { type: "string" }, label: { type: "string" } }, required: ["date"] },
+    route(question, ctx) {
+      const q = question.normalize("NFKC");
+      if (!WX_Q.test(q) || /日記|記録|だった|でした|曲|家計簿|予定を|追加/.test(q)) return undefined; // the weather of a day gone by: the diary
+      const t = today(ctx), d = daysOf(q, ctx);
+      if (d && (d.from !== d.to || d.from < t || d.from > addDays(t, 6))) return undefined;
+      return { date: d ? d.from : t, label: d ? d.label : "今日" };
+    },
+    formatAnswer(result) { return result.ok ? result.value : `天気を取ってこられませんでした（${result.error}）。`; },
+    async execute(a, ctx) {
+      const at = await src.where(); if (!at) throw new Error("いまいる場所が分かりません（位置情報を許可するか、場所の記録を使ってください）");
+      const j = await src.fetchJSON(`https://api.open-meteo.com/v1/forecast?latitude=${at.lat.toFixed(3)}&longitude=${at.lng.toFixed(3)}&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m&hourly=temperature_2m,precipitation_probability,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=7`);
+      const di = arr(j?.daily?.time).indexOf(a.date); if (di < 0) throw new Error("その日の予報はありません");
+      const dl = j.daily, out: string[] = [];
+      const where = at.name ? `${at.name}あたり` : "いまいるあたり";
+      if (a.date === today(ctx) && j.current) out.push(`いま ${Math.round(j.current.temperature_2m)}°（体感 ${Math.round(j.current.apparent_temperature)}°）、${WX(j.current.weather_code)}。`);
+      out.push(`${whenJa(a.label, a.date)}は${WX(dl.weather_code[di])}、最高 ${Math.round(dl.temperature_2m_max[di])}° / 最低 ${Math.round(dl.temperature_2m_min[di])}°、降水確率 ${dl.precipitation_probability_max[di] ?? "?"}%。`);
+      const hours = arr(j.hourly?.time).map((t: string, i: number) => ({ t, p: +j.hourly.precipitation_probability[i] || 0, c: j.hourly.weather_code[i] })).filter((h: any) => h.t.startsWith(a.date) && (a.date !== today(ctx) || +h.t.slice(11, 13) >= new Date(ctx.now).getHours()));
+      const wet = hours.filter((h: any) => h.p >= 50);
+      if (wet.length) out.push(`${+wet[0]!.t.slice(11, 13)}時ごろから雨の可能性が高くなります（${Math.max(...wet.map((h: any) => h.p))}%）。傘があると安心です。`);
+      else if ((dl.precipitation_probability_max[di] ?? 0) >= 30) out.push("にわか雨があるかもしれません。折りたたみ傘があると安心です。");
+      return `${where}の天気です。\n${out.join("\n")}`;
+    },
+  };
+}
+
 // ---------------------------------------------------------------- 家計簿 (exact sums, no model)
 const MONEY_Q = /円|いくら|幾ら|金額|使っ|つかっ|支出|出費|収入|家計簿|お金|稼い|もらった/;
 interface MoneyArgs { from?: string; to?: string; label: string; kind: "out" | "in"; cats: string[]; catNames: string[]; words: string[] }
@@ -981,7 +1150,8 @@ export function createHibiAI(src: HibiSource): PersonalAI & { hibiRoutes(questio
     },
     getTools: () => tools,
   });
-  const tools = [routeSearchTool(src), routeChangeTool(src), addTool(src), moneyTool(src), habitTool(src), attendanceTool(src), nextTool(src), freeTool(src), todoTool(src), scheduleTool(src)] as unknown as AITool[];
+  const newsMem = { list: [] as NewsArticle[] };
+  const tools = [routeSearchTool(src), newsTool(src, newsMem), baseballTool(src), weatherTool(src), routeChangeTool(src), addTool(src), moneyTool(src), habitTool(src), attendanceTool(src), nextTool(src), freeTool(src), todoTool(src), scheduleTool(src)] as unknown as AITool[];
   const engine = new PersonalAI({
     appId: APP_ID,
     adapter,
