@@ -78,6 +78,10 @@ export interface HibiSource {
    * Returns the event as it was sent.
    */
   addEvent(e: NewEvent): Promise<NewEvent>;
+  /** のりかえ（乗換案内）の API を呼ぶ：/api/search・/api/timetable・/api/train */
+  nk(path: string, params: Record<string, string>): Promise<any>;
+  /** いま会話に出ている経路（調べた・変えた最後のもの）と、選んでいる番号 */
+  routeContext(): { result: RouteResult; selected: number } | null;
   /** ひび手帳の家計簿（支出・収入の記録とカテゴリー） */
   money(): MoneyData;
   /** ひび手帳のそのほか全部（あとで・テンプレート・バイト先・場所・メモ・習慣・予算・貯金・刻・Asterism・凪…）。形はひび手帳のまま */
@@ -368,6 +372,223 @@ function addTool(src: HibiSource): AITool<NewEvent & Record<string, unknown>, Ne
       if (!e.title) throw new Error("予定の名前がありません");
       if (!allDay && !(/^([01]\d|2[0-3]):[0-5]\d$/.test(e.start!) && /^([01]\d|2[0-3]):[0-5]\d$/.test(e.end!))) throw new Error("時刻が正しくありません");
       return src.addEvent(e);
+    },
+  };
+}
+
+// ---------------------------------------------------------------- 経路（のりかえ）: search, and change by talking
+/** A step of a route, the same as のりかえ's 「ひび手帳に追加」 and ひび手帳's own routes */
+export type RouteStep =
+  | { k: "s"; name: string; arr: string; dep: string; code?: string }
+  | { k: "a"; line: string; dest: string; color: string; walk: boolean; platform: string; stops: string; stopList: Array<{ time: string; name: string }> };
+export interface RoutePayload { v: 1; from: string; to: string; via: string; date: string; dep: string; arr: string; duration: string; transfers: number | null; fare: number | null; fareNote: string; tags: string[]; steps: RouteStep[] }
+export interface RouteQuery { from: string; to: string; date: string; time: string; type: "dep" | "arr" | "first" | "last"; shin: boolean; ex: boolean; via: string }
+export interface RouteResult { query: RouteQuery; routes: RoutePayload[]; text: string }
+
+const R_Q = /経路|乗り?換え|乗換|のりかえ|行き方|行きかた|どうやって行|ルート|電車で/;
+const rtNorm = (s: string) => String(s || "").normalize("NFKC").replace(/\s+/g, "").replace(/[(（][^)）]*[)）]/g, "").replace(/駅$/, "");
+const hm2 = (m: number) => `${pad(Math.floor((((m % 1440) + 1440) % 1440) / 60))}:${pad((((m % 1440) + 1440) % 1440) % 60)}`;
+const minOf = (t: string) => { const x = /^(\d{1,2}):(\d{2})/.exec(t || ""); return x ? +x[1]! * 60 + +x[2]! : NaN; };
+
+/** the day a request names: 「明日」「11月9日」「金曜」…（年のない日付は、これから来るその日） */
+function takeDay(q0: string, t: string): { date: string; q: string } | undefined {
+  let q = q0, date = t;
+  const wdm = q.match(/(今週|来週|再来週)?の?\s*([月火水木金土日])曜日?/);
+  if (/明後日|あさって/.test(q)) { date = addDays(t, 2); q = q.replace(/(明後日|あさって)(に|の|は)?/, " "); }
+  else if (wdm) {
+    const want = "日月火水木金土".indexOf(wdm[2]!), now = new Date(+t.slice(0, 4), +t.slice(5, 7) - 1, +t.slice(8, 10)).getDay();
+    if (wdm[1]) { const mon = addDays(t, -((now + 6) % 7)); date = addDays(mon, (wdm[1] === "来週" ? 7 : wdm[1] === "再来週" ? 14 : 0) + (want + 6) % 7); }
+    else date = addDays(t, (want - now + 7) % 7);
+    q = q.replace(new RegExp(`${wdm[0]}(に|の|は)?`), " ");
+  } else {
+    const intent = parseDateIntent(q, t);
+    if (intent) {
+      if (intent.from !== intent.to) return undefined;
+      date = intent.from;
+      if (date < t && !/年/.test(intent.phrase)) { const y = new Date(+t.slice(0, 4), +date.slice(5, 7) - 1, +date.slice(8, 10)) < new Date(+t.slice(0, 4), +t.slice(5, 7) - 1, +t.slice(8, 10)) ? +t.slice(0, 4) + 1 : +t.slice(0, 4); date = `${y}${date.slice(4)}`; }
+      q = q.replace(new RegExp(`${intent.phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(に|の|は)?`), " ");
+    }
+  }
+  return { date, q };
+}
+/** 「11月9日に、繰舟橋から刈谷市駅へ16時につきたい、経路を調べて」 → { from: 繰舟橋, to: 刈谷市, date, time: 16:00, type: arr } */
+export function parseRouteAsk(question: string, ctx: ToolContext): RouteQuery | undefined {
+  const q0 = question.normalize("NFKC");
+  if (!/から/.test(q0) || !(R_Q.test(q0) || /(調べ|探し|教え|検索)/.test(q0))) return undefined;
+  if (/日記|家計簿|円|いくら/.test(q0)) return undefined;
+  const t = today(ctx), d = takeDay(q0, t); if (!d) return undefined;
+  let q = d.q, time = "", type: RouteQuery["type"] = "dep";
+  if (/終電/.test(q)) type = "last"; else if (/始発/.test(q)) type = "first";
+  q = q.replace(/(午前|午後|朝|夜|夕方)?\s*(\d{1,2})\s*(?:時|:)\s*(?:(\d{1,2})\s*分?|(半))?\s*(まで(に)?|に|の)?\s*(着き?|つき|つく|着く|到着|出発|出|発)?/, (m, ap, h, mi, half, _p, _n, verb) => {
+    let hh = +h; const mm = half ? 30 : mi ? +mi : 0;
+    if ((ap === "午後" || ap === "夜" || ap === "夕方") && hh < 12) hh += 12;
+    if (hh <= 24 && mm <= 59) time = `${pad(hh % 24)}:${pad(mm)}`;
+    if (verb && /着|つ|到/.test(verb)) type = "arr"; else if (/まで/.test(m)) type = "arr";
+    return " ";
+  });
+  if (/着きたい|つきたい|到着したい|に着く|につく|までに/.test(q0) && type === "dep" && time) type = "arr";
+  const via = (q.match(/([^\s、。,，「」]+?)(?:駅)?経由/) ?? [])[1] ?? "";
+  q = q.replace(/([^\s、。,，「」]+?)(?:駅)?経由(で|して)?/, " ");
+  const m = q.match(/([^\s、。,，「」()（）]+?)(?:駅)?から\s*([^\s、。,，「」()（）]+?)(?:駅)?(?:まで|へ|に|行|の|$)/);
+  if (!m) return undefined;
+  const clean = (x: string) => x.replace(/^(に|で|は|を|の|、)+/, "").trim();
+  const from = clean(m[1]!), to = clean(m[2]!);
+  if (!from || !to || from.length > 30 || to.length > 30) return undefined;
+  const date = d.date;
+  if (!time) { if (date === t) { const n = nowMin(ctx); time = hm2(n); } else time = "09:00"; }
+  return { from, to, date, time, type, via, shin: !/新幹線(は|を)?(使わ|なし|乗らない|以外)/.test(q0), ex: !/特急(は|を)?(使わ|なし|乗らない|以外)/.test(q0) };
+}
+/** a route of the API (/api/search) as ひび手帳 keeps it */
+function payloadOf(r: any, q: RouteQuery): RoutePayload {
+  const s = r.summary || {}, steps: RouteStep[] = (r.steps || []).map((st: any) => (st.kind === "station"
+    ? { k: "s", name: String(st.name || ""), arr: st.arr || "", dep: st.dep || "", code: st.code || "" }
+    : { k: "a", line: st.line || "", dest: st.destination || "", color: st.color || "", walk: !!st.walk, platform: st.platform || "", stops: st.stops || "", stopList: (st.stopList || []).map((x: any) => ({ time: x.time || "", name: x.name || "" })) }));
+  const sts = steps.filter((x): x is Extract<RouteStep, { k: "s" }> => x.k === "s");
+  const dep = s.dep || sts[0]?.dep || "", arr = s.arr || sts[sts.length - 1]?.arr || "";
+  // an arrive-by search can set off the day before (23:50 → 0:20)
+  const date = q.type === "arr" && minOf(dep) > minOf(arr) ? addDays(q.date, -1) : q.date;
+  return { v: 1, from: sts[0]?.name || q.from, to: sts[sts.length - 1]?.name || q.to, via: q.via || "", date, dep, arr, duration: s.duration || "", transfers: Number.isFinite(+s.transfers) && s.transfers != null ? +s.transfers : null,
+    fare: Number.isFinite(+s.fare) && s.fare != null ? +s.fare : null, fareNote: s.fareNote || "", tags: Array.isArray(s.tags) ? s.tags : [], steps };
+}
+async function searchRoutes(src: HibiSource, q: RouteQuery): Promise<RoutePayload[]> {
+  const j = await src.nk("/api/search", { from: q.from, to: q.to, date: q.date, time: q.time, type: q.type, shin: q.shin ? "1" : "0", ex: q.ex ? "1" : "0", ...(q.via ? { via: q.via } : {}) });
+  return (Array.isArray(j?.routes) ? j.routes : []).map((r: any) => payloadOf(r, q)).filter((r: RoutePayload) => r.dep && r.arr && r.steps.length);
+}
+const lines = (r: RoutePayload) => r.steps.filter((x) => x.k === "a" && !x.walk).map((x) => (x as any).line).filter(Boolean);
+export const routeLine = (r: RoutePayload, i?: number) =>
+  `${i !== undefined ? `${"①②③④⑤⑥"[i] ?? i + 1} ` : ""}${hm(r.dep)}発 → ${hm(r.arr)}着（${[r.duration.replace(/\(.*\)$/, ""), r.transfers != null ? `乗換${r.transfers}回` : "", r.fare != null ? `${r.fareNote === "目安" ? "約" : ""}${r.fare.toLocaleString()}円` : ""].filter(Boolean).join("・")}）\n　${lines(r).join(" → ")}`;
+const late = (q: RouteQuery, r: RoutePayload) => (q.type === "arr" && minOf(r.arr) > minOf(q.time) && minOf(r.arr) - minOf(q.time) < 720 ? `\n※ ${hm(q.time)}には間に合いません（${hm(r.arr)}着）` : "");
+
+function routeSearchTool(src: HibiSource): AITool<RouteQuery & Record<string, unknown>, RouteResult> {
+  return {
+    name: "hibi_route",
+    description: "のりかえ（乗換案内）で、出発駅から到着駅までの経路を調べる",
+    access: "read",
+    whenToUse: [R_Q, /から.+(まで|へ)/],
+    answersWithoutRecords: true,
+    parameters: { type: "object", properties: { from: { type: "string" }, to: { type: "string" }, date: { type: "string" }, time: { type: "string" }, type: { type: "string", enum: ["dep", "arr", "first", "last"] },
+      shin: { type: "boolean", description: "新幹線を使うか" }, ex: { type: "boolean", description: "有料特急を使うか" }, via: { type: "string", description: "経由する駅" } }, required: ["from", "to"] },
+    route(question, ctx) { return parseRouteAsk(question, ctx) as (RouteQuery & Record<string, unknown>) | undefined; },
+    formatAnswer(result) { return result.ok ? result.value.text : `経路を調べられませんでした（${result.error}）。`; },
+    async execute(q) {
+      const routes = (await searchRoutes(src, q)).slice(0, 3);
+      if (!routes.length) throw new Error("経路が見つかりませんでした。駅名を確かめてください");
+      const head = `${dayJa(q.date)}、${q.from} → ${q.to}${q.via ? `（${q.via}経由）` : ""}、${q.type === "arr" ? `${hm(q.time)}に着く` : q.type === "last" ? "終電" : q.type === "first" ? "始発" : `${hm(q.time)}に出る`}経路です。`;
+      return { query: q, routes, text: `${head}\n${routes.map((r, i) => routeLine(r, i)).join("\n")}${late(q, routes[0]!)}\n\n「ひび手帳に追加」で予定に入れられます。「名鉄名古屋から名鉄岐阜は普通にしたい」「特急は使わないで」「1本あとで」のように話すと、経路を変えられます。` };
+    },
+  };
+}
+
+// ---- changing the route on screen
+const KIND_RE = /(快速特急|快速急行|区間準急|区間急行|特別快速|新快速|各駅停車|各停|普通|準急|急行|快速|特急)/;
+const kindOk = (want: string, k: string) => (/普通|各駅停車|各停/.test(want) ? /^(普通|各駅停車|各停|ワンマン)/.test(k) : k === want || (want === "特急" && /特急/.test(k) && !/快速特急/.test(k)) || k.startsWith(want));
+interface ChangeArgs { mode: "kind" | "noex" | "noshin" | "later" | "earlier" | "via" | "show"; i: number; kind?: string; dest?: string; a?: string; b?: string; via?: string; text?: string }
+function parseChange(q0: string, ctxR: { result: RouteResult; selected: number } | null): ChangeArgs | undefined {
+  if (!ctxR) return undefined;
+  const q = q0.normalize("NFKC"), rs = ctxR.result.routes;
+  const n = q.match(/([1-6１-６①②③④⑤⑥一二三])\s*(つ目|番目|番|個目)?の?(経路|ルート|案)?/);
+  const pick = (x?: string) => { if (!x) return undefined; const k = "1１①一".includes(x) ? 0 : "2２②二".includes(x) ? 1 : "3３③三".includes(x) ? 2 : +x - 1; return k >= 0 && k < rs.length ? k : undefined; };
+  const i = (n && (n[2] || n[3]) ? pick(n[1]) : undefined) ?? ctxR.selected ?? 0;
+  const r = rs[i]; if (!r) return undefined;
+  if (/特急(は|を)?(使わ|なし|乗らない|以外|やめ)/.test(q)) return { mode: "noex", i };
+  if (/新幹線(は|を)?(使わ|なし|乗らない|以外|やめ)/.test(q)) return { mode: "noshin", i };
+  if (/(1|一|ひと)本(あと|後|遅|おそ)|次の電車|遅らせ|もっと遅|ゆっくり出/.test(q)) return { mode: "later", i };
+  if (/(1|一|ひと)本(前|早|はや)|もっと早|早めに/.test(q)) return { mode: "earlier", i };
+  const via = (q.match(/([^\s、。,，「」]+?)(?:駅)?経由/) ?? [])[1];
+  if (via) return { mode: "via", i, via };
+  const km = q.match(KIND_RE);
+  if (km) {
+    // 「普通の岐阜行」「岐阜行きの普通」
+    const dm = q.match(new RegExp(`${km[1]}(?:の|で)?\\s*([^\\s、。のでにを]{1,8}?)行き?`)) ?? q.match(new RegExp(`([^\\s、。のでにを]{1,8}?)行き?の\\s*${km[1]}`));
+    const sts = r.steps.filter((x) => x.k === "s").map((x) => x.name);
+    const named = sts.map((name) => ({ name, at: q.indexOf(rtNorm(name)) })).filter((x) => x.at >= 0 && rtNorm(x.name).length >= 2);
+    // a station that is only the destination of the train asked for (「岐阜行」) is not a station of the section
+    const hits = [...new Map(named.filter((x) => !dm || !q.slice(x.at, x.at + rtNorm(x.name).length + 1).match(/行/)).sort((p, q2) => sts.indexOf(p.name) - sts.indexOf(q2.name)).map((x) => [rtNorm(x.name), x])).values()];
+    return { mode: "kind", i, kind: km[1]!, text: q, ...(dm ? { dest: dm[1] } : {}), ...(hits[0] ? { a: hits[0].name } : {}), ...(hits[1] ? { b: hits[1].name } : {}) };
+  }
+  if (/(この|その|これ|それ|経路|ルート).*(追加|入れ)/.test(q) || /(追加|入れ).*(この|その|これ|それ)/.test(q)) return { mode: "show", i };
+  return undefined;
+}
+async function changeRoute(src: HibiSource, a: ChangeArgs, ctxR: { result: RouteResult; selected: number }): Promise<RouteResult> {
+  const { query } = ctxR.result, r = ctxR.result.routes[a.i]!;
+  const done = (routes: RoutePayload[], q: RouteQuery, head: string): RouteResult => ({ query: q, routes, text: `${head}\n${routes.map((x, k) => routeLine(x, routes.length > 1 ? k : undefined)).join("\n")}${late(q, routes[0]!)}` });
+  if (a.mode === "show") return done([r], query, "この経路です。下の「ひび手帳に追加」を押すと、ひび手帳の予定に入ります。");
+  if (a.mode === "noex" || a.mode === "noshin" || a.mode === "via") {
+    const q = { ...query, ...(a.mode === "noex" ? { ex: false } : a.mode === "noshin" ? { shin: false } : { via: a.via! }) };
+    const routes = (await searchRoutes(src, q)).slice(0, 3); if (!routes.length) throw new Error("その条件の経路が見つかりませんでした");
+    return done(routes, q, a.mode === "noex" ? "有料特急を使わない経路です。" : a.mode === "noshin" ? "新幹線を使わない経路です。" : `${a.via}を通る経路です。`);
+  }
+  if (a.mode === "later" || a.mode === "earlier") {
+    const q: RouteQuery = a.mode === "later" ? { ...query, type: "dep", time: hm2(minOf(r.dep) + 1), date: r.date } : { ...query, type: "arr", time: hm2(minOf(r.arr) - 1) };
+    const routes = (await searchRoutes(src, q)).filter((x) => (a.mode === "later" ? minOf(x.dep) > minOf(r.dep) : minOf(x.arr) < minOf(r.arr))).slice(0, 1);
+    if (!routes.length) throw new Error(a.mode === "later" ? "あとの電車が見つかりませんでした" : "前の電車が見つかりませんでした");
+    return done(routes, { ...query, ...(a.mode === "later" ? {} : {}) }, a.mode === "later" ? "1本あとの経路です。" : "1本前の経路です。");
+  }
+  // ---- a section by another kind of train: the boarding station's timetable → that train's stops → the rest searched from where it is left
+  const steps = r.steps, sIdx = steps.map((x, k) => (x.k === "s" ? k : -1)).filter((k) => k >= 0);
+  const rideAfter = (k: number) => { const n = steps[k + 1]; return n && n.k === "a" && !n.walk; };
+  let iA = a.a ? steps.findIndex((x) => x.k === "s" && rtNorm(x.name) === rtNorm(a.a!)) : -1;
+  if (iA < 0 || !rideAfter(iA)) iA = sIdx.find((k) => rideAfter(k) && (!a.b || sIdx.some((j) => j > k && rtNorm((steps[j] as any).name) === rtNorm(a.b!)))) ?? -1;
+  if (iA < 0) throw new Error("電車に乗る駅が見つかりませんでした");
+  const A = steps[iA] as Extract<RouteStep, { k: "s" }>, seg = steps[iA + 1] as Extract<RouteStep, { k: "a" }>;
+  if (!A.code) throw new Error(`${A.name}の時刻表が分かりませんでした`);
+  const first = iA === 0 || steps.slice(0, iA).every((x) => x.k === "s" || x.walk);
+  const reach = first ? null : minOf(A.arr) + 1; // a minute to change trains
+  const tt = await src.nk("/api/timetable", { code: A.code, date: r.date, time: hm2(minOf(A.dep)), line: seg.line, dest: a.dest || seg.dest.replace(/行き?$/, "") });
+  const trains: any[] = Array.isArray(tt?.trains) ? tt.trains : [];
+  const fits = trains.filter((t) => kindOk(a.kind!, String(t.kind || "")) && (!a.dest || String(t.destination || "").includes(a.dest)));
+  if (!fits.length) throw new Error(`${A.name}から乗れる${a.kind}${a.dest ? `（${a.dest}行）` : ""}が時刻表にありません`);
+  // after arriving there; from the start of the trip, the one closest to the original time (an arrive-by trip: not later than it)
+  const want = minOf(A.dep);
+  const t = reach != null ? fits.find((x) => x.min >= reach) : query.type === "arr" ? [...fits].reverse().find((x) => x.min <= want) ?? fits[0] : fits.find((x) => x.min >= want - 5) ?? fits[fits.length - 1];
+  if (!t) throw new Error(`${A.name}で乗り換えられる${a.kind}がありません`);
+  const tr = await src.nk("/api/train", { code: A.code, group: String(tt.groupId ?? ""), train: String(t.trainId ?? ""), kind: String(tt.kind ?? ""), hh: String(Math.floor(t.min / 60)), mm: String(t.min % 60) });
+  const stops: Array<{ name: string; arr?: string; dep?: string }> = Array.isArray(tr?.stops) ? tr.stops : [];
+  const here = stops.findIndex((x) => rtNorm(x.name) === rtNorm(A.name));
+  if (here < 0) throw new Error("その電車の停車駅を読めませんでした");
+  const finalName = (steps[steps.length - 1] as any).name as string, segEnd = (steps[iA + 2] as any)?.name as string | undefined;
+  const after = (n?: string) => (n ? stops.findIndex((x, k) => k > here && rtNorm(x.name) === rtNorm(n)) : -1);
+  let off = after(a.b);
+  if (a.b && off < 0) throw new Error(`その${t.kind}は${a.b}に止まりません`);
+  if (off < 0 && a.text) { // a stop of this train named in what was said, not only stations of the route (「金山まで普通」)
+    const said = stops.map((x, k) => ({ k, at: a.text!.indexOf(rtNorm(x.name)), n: rtNorm(x.name) })).filter((x) => x.k > here && x.at >= 0 && x.n.length >= 2 && !/^行/.test(a.text!.slice(x.at + x.n.length)));
+    if (said.length) off = said.sort((p, q2) => p.at - q2.at)[0]!.k;
+  }
+  if (off < 0) off = after(finalName);
+  if (off < 0) off = after(segEnd);
+  if (off < 0) off = stops.length - 1;
+  const S0 = stops[off]!, offArr = S0.arr || S0.dep || "";
+  const prefix = steps.slice(0, iA + 1).map((x, k) => (k === iA ? { ...(x as any), dep: t.time } : x)) as RouteStep[];
+  const ride: RouteStep = { k: "a", line: `${String(tt.railName || seg.line).replace(/\s+/g, "")} ${t.kind}`.trim(), dest: `${t.destination}${/行$/.test(t.destination) ? "" : "行"}`, color: seg.color, walk: false,
+    platform: t.track ? `${t.track}番線` : "", stops: `${off - here}駅`, stopList: stops.slice(here + 1, off).map((x) => ({ name: x.name, time: x.dep || x.arr || "" })) };
+  let rest: RouteStep[] = [{ k: "s", name: S0.name, arr: offArr, dep: "" }];
+  if (rtNorm(S0.name) !== rtNorm(finalName)) {
+    const q2: RouteQuery = { ...query, from: S0.name, to: finalName, type: "dep", time: hm2(minOf(offArr) + 1), date: r.date, via: "" };
+    const more = (await searchRoutes(src, q2))[0];
+    if (!more) throw new Error(`${S0.name}から先の経路が見つかりませんでした`);
+    rest = [{ k: "s", name: S0.name, arr: offArr, dep: more.dep, code: (more.steps[0] as any).code || "" }, ...more.steps.slice(1)];
+  }
+  const all = [...prefix, ride, ...rest], sts = all.filter((x) => x.k === "s") as Array<Extract<RouteStep, { k: "s" }>>;
+  const dep = (sts[0]!.dep || t.time), arr = sts[sts.length - 1]!.arr, mins = (minOf(arr) - minOf(dep) + 1440) % 1440;
+  const nr: RoutePayload = { ...r, dep, arr, duration: dur(mins), transfers: Math.max(0, all.filter((x) => x.k === "a" && !x.walk).length - 1), fareNote: "目安", tags: [], steps: all };
+  return done([nr], query, `${A.name}から${S0.name}を、${hm(t.time)}発の${t.kind} ${ride.dest}にしました（運賃は前の経路のときの目安です）。`);
+}
+function routeChangeTool(src: HibiSource): AITool<ChangeArgs & Record<string, unknown>, RouteResult> {
+  return {
+    name: "hibi_route_change",
+    description: "会話に出ている経路を、区間の電車の種別・特急なし・1本あと・経由などで変える",
+    access: "read",
+    answersWithoutRecords: true,
+    parameters: { type: "object", properties: { mode: { type: "string" }, i: { type: "integer" }, kind: { type: "string" }, dest: { type: "string" }, a: { type: "string" }, b: { type: "string" }, via: { type: "string" }, text: { type: "string" } }, required: ["mode"] },
+    route(question) {
+      const q = question.split(FOLLOW)[0]!;
+      if (parseRouteAsk(q, { appId: APP_ID, now: new Date(), timeZone: TZ })) return undefined; // a new search
+      return parseChange(q, src.routeContext()) as (ChangeArgs & Record<string, unknown>) | undefined;
+    },
+    formatAnswer(result) { return result.ok ? result.value.text : `経路を変えられませんでした（${result.error}）。`; },
+    async execute(a) {
+      const c = src.routeContext(); if (!c) throw new Error("変える経路がありません。先に経路を調べてください");
+      return changeRoute(src, a, c);
     },
   };
 }
@@ -758,7 +979,7 @@ export function createHibiAI(src: HibiSource): PersonalAI & { hibiRoutes(questio
     },
     getTools: () => tools,
   });
-  const tools = [addTool(src), moneyTool(src), habitTool(src), attendanceTool(src), nextTool(src), freeTool(src), todoTool(src), scheduleTool(src)] as unknown as AITool[];
+  const tools = [routeSearchTool(src), routeChangeTool(src), addTool(src), moneyTool(src), habitTool(src), attendanceTool(src), nextTool(src), freeTool(src), todoTool(src), scheduleTool(src)] as unknown as AITool[];
   const engine = new PersonalAI({
     appId: APP_ID,
     adapter,

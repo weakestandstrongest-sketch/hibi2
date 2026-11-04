@@ -257,6 +257,22 @@ svg{display:block}
 .cf-btns{display:flex;gap:8px;margin-top:12px}
 .cf-btns .btn{margin:0;padding:11px}
 .cf p{margin:8px 0 0;font-size:12px;color:var(--ink-3)}
+.msg.rt{width:92%;max-width:92%;white-space:pre-wrap}
+.rtc{white-space:normal;margin-top:10px;padding:12px;border-radius:16px;background:var(--bg);box-shadow:inset 0 0 0 1.5px var(--line)}
+.rtc.sel{box-shadow:inset 0 0 0 2px var(--accent)}
+.rtc-h{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.rtc-h b{font-size:19px;font-weight:800;margin-right:4px}
+.rtc-h i{font-style:normal;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;color:#fff;background:#8B8FA8}
+.rtc-h .tg-早{background:#E9776F}.rtc-h .tg-安{background:#5BB07A}.rtc-h .tg-楽{background:#4AA3C8}
+.rtc-m{font-size:12.5px;color:var(--ink-2);margin-top:2px}
+.rtc-l{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.rtc-l span{font-size:11.5px;font-weight:700;padding:2px 9px;border-radius:999px;background:color-mix(in srgb,var(--c) 16%,transparent);color:var(--ink)}
+.rtc details{margin-top:8px}
+.rtc summary{cursor:pointer;color:var(--accent);font-weight:700;font-size:12.5px}
+.rtc .rt-steps{box-shadow:none;background:var(--surface);margin-top:6px;padding:4px 10px}
+.rtc .rt-steps .st .nm{font-size:14px;padding:8px 0}
+.rtc-b{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.rtc-b .btn{flex:1;min-width:0;margin:0;padding:10px;font-size:13px}
 .msg .tool{display:block;font-size:11.5px;color:var(--ink-3);margin-bottom:4px}
 .composer{position:fixed;left:0;right:0;bottom:calc(max(10px,env(safe-area-inset-bottom)) + 70px);z-index:7;display:flex;justify-content:center;padding:0 12px;pointer-events:none}
 .composer form{pointer-events:auto;display:flex;align-items:flex-end;gap:8px;width:min(28rem,calc(100vw - 1.5rem));padding:6px 6px 6px 16px;border-radius:26px;
@@ -571,6 +587,18 @@ async function addToHibi(e) {
   if (tab === 'today') render();
   return item.event;
 }
+// a route from のりかえ, the same as home's 「ひび手帳に追加」: ひび手帳 makes it a 経路 plan when it opens
+const pad2 = n => String(n).padStart(2, '0'), hm5 = t => { const m = /^(\d{1,2}):(\d{2})/.exec(t || ''); return m ? `${pad2(+m[1])}:${m[2]}` : ''; };
+const routeEvent = r => ({ title: `${r.from} → ${r.to}`, date: r.date, allDay: false, start: hm5(r.dep), end: hm5(r.arr), route: r });
+async function addRouteToHibi(r) {
+  if (!gd.rt) throw new Error('Googleにログインしていないため、ひび手帳に渡せません（「今日」の画面からログインしてください）');
+  const item = { id: 'mn-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), kind: 'route', by: 'mainichi', createdAt: new Date().toISOString(), route: r };
+  const files = await ibRead(), items = [...files.flatMap(f => f.items), item];
+  await gdWrite(IB_FILE, JSON.stringify({ app: 'hibi-inbox', version: 1, savedAt: new Date().toISOString(), by: 'mainichi', items }), files.length ? files[0].id : '');
+  sent.push({ id: item.id, kind: 'route', event: routeEvent(r), at: Date.now() }); lsSet(SENT_KEY, sent);
+  inboxSeen.push(item);
+  if (tab === 'today') render();
+}
 // is this asked-for event already in ひび手帳's own data?
 const inHibi = e => S && S.events.some(x => x && x.date === e.date && x.title === e.title && !!x.allDay === !!e.allDay && (e.allDay || (x.start === e.start && x.end === e.end)));
 // what is still waiting for ひび手帳: asked for here (or seen in the inbox), and not in hibi.json yet
@@ -578,27 +606,27 @@ function pendingEvents() {
   if (!S) return [];
   const map = new Map();
   for (const x of sent) map.set(x.id, x.event);
-  for (const it of inboxSeen) if (it && it.kind === 'event' && it.event) map.set(String(it.id), it.event);
+  for (const it of inboxSeen) if (it && it.kind === 'event' && it.event) map.set(String(it.id), it.event); else if (it && it.kind === 'route' && it.route && it.route.date) map.set(String(it.id), routeEvent(it.route));
   return [...map.entries()].filter(([, e]) => e && /^\d{4}-\d{2}-\d{2}$/.test(e.date) && !inHibi(e))
-    .map(([id, e]) => ({ id: 'pend_' + id, title: String(e.title), date: e.date, allDay: !!e.allDay, start: e.start || '09:00', end: e.end || '10:00', color: '#4F8ED6', icon: 'star', repeat: 'none', pending: true,
+    .map(([id, e]) => ({ id: 'pend_' + id, title: String(e.title), date: e.date, allDay: !!e.allDay, start: e.start || '09:00', end: e.end || '10:00', color: '#4F8ED6', icon: e.route ? 'train' : 'star', repeat: 'none', pending: true, ...(e.route ? { route: e.route } : {}),
       ...(e.show === 'cal' ? { calOnly: true } : e.show === 'tl' ? { routine: true } : {}), ...(e.countdown ? { countdown: true } : {}) }));
 }
 const RESCUE_BEFORE = Date.parse('2026-11-05T00:00:00+09:00');
 async function ibCheck() {
   let files;
   try { files = await ibRead(); } catch (e) { return; }
-  inboxSeen = files.flatMap(f => f.items).filter(it => it && it.kind === 'event');
+  inboxSeen = files.flatMap(f => f.items).filter(it => it && (it.kind === 'event' || it.kind === 'route'));
   // forget what ひび手帳 has taken in (and, after two weeks, what never made it)
   const still = new Set(inboxSeen.map(it => String(it.id)));
   sent = sent.filter(x => !inHibi(x.event) && Date.now() - x.at < 14 * 864e5);
   // gone from the inbox but not in ひび手帳: an older ひび手帳 (before 2.28.0) took it out without adding it.
   // Ask again with a new id (that one remembers the old id as handled). Safe to repeat: ひび手帳 skips an event it already has.
   // only requests made before ひび手帳 2.28.0 was out, and only once each (after that, a missing one may simply have been renamed in ひび手帳)
-  const lost = sent.filter(x => !x.re && x.at < RESCUE_BEFORE && !still.has(x.id) && Date.now() - x.at > 10 * 60000);
+  const lost = sent.filter(x => x.kind !== 'route' && !x.re && x.at < RESCUE_BEFORE && !still.has(x.id) && Date.now() - x.at > 10 * 60000);
   if (lost.length) {
     const items = files.flatMap(f => f.items);
     for (const x of lost) { x.id = 'mn-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); x.re = Date.now(); items.push({ id: x.id, kind: 'event', by: 'mainichi', createdAt: new Date().toISOString(), event: x.event }); }
-    try { await gdWrite(IB_FILE, JSON.stringify({ app: 'hibi-inbox', version: 1, savedAt: new Date().toISOString(), by: 'mainichi', items }), files.length ? files[0].id : ''); inboxSeen = items.filter(it => it && it.kind === 'event'); }
+    try { await gdWrite(IB_FILE, JSON.stringify({ app: 'hibi-inbox', version: 1, savedAt: new Date().toISOString(), by: 'mainichi', items }), files.length ? files[0].id : ''); inboxSeen = items.filter(it => it && (it.kind === 'event' || it.kind === 'route')); }
     catch (e) { /* next time */ }
   }
   lsSet(SENT_KEY, sent);
@@ -956,14 +984,25 @@ const hibiSource = {
   entries: () => S.entries || [],
   addEvent: e => addToHibi(e),
   money: () => S.money || { cats: { out: [], in: [] }, entries: [] },
+  async nk(path, params) {
+    const b = norikaeBase(); if (!b) throw new Error('乗換案内のURLが設定されていません（設定で入れられます）');
+    const ac = new AbortController(), to = setTimeout(() => ac.abort(), 20000);
+    try {
+      const r = await fetch(`${b}${path}?${new URLSearchParams(params)}`, { signal: ac.signal }), j = await r.json().catch(() => ({}));
+      if (!r.ok || (j.error && !(Array.isArray(j.routes) && j.routes.length))) throw new Error(j.error || `のりかえに接続できませんでした（${r.status}）`);
+      return j;
+    } catch (e) { throw new Error(e.name === 'AbortError' ? 'のりかえの応答がありませんでした' : e.message || 'のりかえに接続できませんでした'); }
+    finally { clearTimeout(to); }
+  },
+  routeContext: () => AIV.rt ? { result: AIV.rt, selected: AIV.rtSel || 0 } : null,
   more: () => S.more || {},
   weekStartsSunday: () => !!(S.settings && S.settings.weekStart === 'sun'),
   school: () => S.school || {},
   events: () => S.events.filter(e => e && e.date).map(e => ({ id: e.id, title: e.title, date: e.date, start: e.start, end: e.end, allDay: !!e.allDay, repeat: e.repeat, memo: e.memo })),
 };
-const AIV = { mod: null, engine: null, booting: null, err: '', status: { state: 'uninitialized' }, msgs: [], busy: false, model: null, base: null };
+const AIV = { mod: null, engine: null, booting: null, err: '', status: { state: 'uninitialized' }, msgs: [], busy: false, model: null, base: null, rt: lsGet('mainichi.rt'), rtSel: 0 };
 const CONV_KEY = 'mainichi.conv';
-const SUGG = ['今日の予定は？', '次の予定は？', '明日の予定は？', '今日の空き時間は？', 'やることは？', '明日15時から17時までバイトを追加して', '先週の日記をふりかえって'];
+const SUGG = ['今日の予定は？', '次の予定は？', '明日の予定は？', '今日の空き時間は？', 'やることは？', '明日15時から17時までバイトを追加して', '名古屋から岐阜までの経路を調べて', '先週の日記をふりかえって'];
 async function aiBoot() {
   if (AIV.engine) return AIV.engine;
   if (!AIV.booting) AIV.booting = (async () => {
@@ -1041,10 +1080,26 @@ function confirmHTML(c) {
     <div class="cf-btns"><button class="btn primary" data-act="aiYes">追加する</button><button class="btn ghost" data-act="aiNo">やめる</button></div>
     <p>ひび手帳を開くと、ひび手帳の予定に入ります。</p></div>`;
 }
-const msgHTML = m => `<div class="msg ${m.who}${m.wait ? ' wait' : ''}${m.err ? ' err' : ''}${m.confirm ? ' asking' : ''}">${m.tool ? `<span class="tool">${esc(m.tool)}</span>` : ''}${m.confirm ? confirmHTML(m.confirm) : esc(m.text || (m.wait ? '考えています…' : ''))}${(m.src || []).length ? `<span class="src">${m.src.map(c => `<span>${esc(c)}</span>`).join('')}</span>` : ''}</div>`;
+function routeCardHTML(m, mi, r, i) {
+  const sel = AIV.rt === m.rt && (AIV.rtSel || 0) === i && m.rt.routes.length > 1, added = (m.rtAdded || []).includes(i);
+  const rides = r.steps.filter(x => x.k === 'a');
+  const sts = r.steps.filter(x => x.k === 's');
+  const steps = r.steps.map(x => x.k === 's'
+    ? `<li class="st${x === sts[0] ? ' first' : x === sts[sts.length - 1] ? ' last' : ''}"><span class="t num">${x.arr ? `<span>${esc(x.arr)}着</span>` : ''}${x.dep ? `<b>${esc(x.dep)}発</b>` : ''}</span><span class="mk"></span><span class="nm">${esc(x.name)}</span></li>`
+    : `<li class="ac${x.walk ? ' walk' : ''}" style="${/^#[0-9a-f]{3,8}$/i.test(x.color) ? `--c:${x.color}` : ''}"><span class="t"></span><span class="mk"></span><div class="bd"><div class="ln">${esc(x.line)}${x.dest ? ` <span style="font-weight:500;color:var(--ink-2)">${esc(x.dest)}</span>` : ''}</div>${[x.platform, x.stops].filter(Boolean).map(esc).join(' ・ ')}</div></li>`).join('');
+  return `<div class="rtc${sel ? ' sel' : ''}">
+    <div class="rtc-h"><b class="num">${m.rt.routes.length > 1 ? '①②③④⑤⑥'[i] + ' ' : ''}${esc(hm(r.dep))} → ${esc(hm(r.arr))}</b>${(r.tags || []).map(t => `<i class="tg-${esc(t)}">${esc(t)}</i>`).join('')}</div>
+    <div class="rtc-m num">${[esc(String(r.duration || '').replace(/\(.*\)$/, '')), r.transfers != null ? `乗換${r.transfers}回` : '', r.fare != null ? `${r.fareNote === '目安' ? '約' : ''}${Number(r.fare).toLocaleString()}円` : ''].filter(Boolean).join('・')}</div>
+    <div class="rtc-l">${rides.filter(x => !x.walk).map(x => `<span style="--c:${/^#[0-9a-f]{3,8}$/i.test(x.color) ? x.color : 'var(--accent)'}">${esc(x.line)}</span>`).join('')}</div>
+    <details><summary>駅と電車を見る</summary><ol class="rt-steps">${steps}</ol></details>
+    <div class="rtc-b"><button class="btn ${added ? 'ghost' : 'primary'}" data-act="rtAdd" data-m="${mi}" data-i="${i}" ${added ? 'disabled' : ''}>${added ? '追加しました（ひび手帳を開くと入ります）' : 'ひび手帳に追加'}</button>${m.rt.routes.length > 1 ? `<button class="btn ghost" data-act="rtSel" data-m="${mi}" data-i="${i}">${sel ? 'この経路で話しています' : 'この経路で話す'}</button>` : ''}</div></div>`;
+}
+// the answer's own list of routes is shown as cards instead
+const routeText = t => String(t || '').split('\n').filter(l => !/^[①②③④⑤⑥]|^　|^\d{1,2}:\d{2}発/.test(l)).join('\n').trim();
+const msgHTML = (m, mi) => m.rt ? `<div class="msg ai rt">${m.tool ? `<span class="tool">${esc(m.tool)}</span>` : ''}${esc(routeText(m.text))}${m.rt.routes.map((r, i) => routeCardHTML(m, mi, r, i)).join('')}</div>` : `<div class="msg ${m.who}${m.wait ? ' wait' : ''}${m.err ? ' err' : ''}${m.confirm ? ' asking' : ''}">${m.tool ? `<span class="tool">${esc(m.tool)}</span>` : ''}${m.confirm ? confirmHTML(m.confirm) : esc(m.text || (m.wait ? '考えています…' : ''))}${(m.src || []).length ? `<span class="src">${m.src.map(c => `<span>${esc(c)}</span>`).join('')}</span>` : ''}</div>`;
 function aiPaintMsgs(stick) {
   const el = $('#ai-msgs'); if (!el) return;
-  el.innerHTML = AIV.msgs.map(msgHTML).join('');
+  el.innerHTML = AIV.msgs.map((m, i) => msgHTML(m, i)).join('');
   $('#ai-sugg').hidden = AIV.msgs.length > 0;
   const send = $('#ai-send'); if (send) { send.innerHTML = ico(AIV.busy ? 'stop' : 'up'); send.setAttribute('aria-label', AIV.busy ? '止める' : '送る'); }
   if (stick) scrollTo(0, document.documentElement.scrollHeight);
@@ -1066,7 +1121,7 @@ function aiOpen() {
   aiPaintCard(); aiPaintMsgs(true);
   aiBoot().then(() => { aiPaintCard(); aiPaintMsgs(true); }, () => aiPaintCard());
 }
-const TOOL_JA = { hibi_add_event: 'ひび手帳への追加', hibi_money: '家計簿を計算しました', hibi_habits: '習慣の記録を数えました', hibi_attendance: '出席を数えました', hibi_schedule: '予定を確認しました', hibi_next: '次の予定を確認しました', hibi_free_time: '空き時間を計算しました', hibi_todos: 'やることを確認しました' };
+const TOOL_JA = { hibi_route: 'のりかえで調べました', hibi_route_change: 'のりかえで経路を変えました', hibi_add_event: 'ひび手帳への追加', hibi_money: '家計簿を計算しました', hibi_habits: '習慣の記録を数えました', hibi_attendance: '出席を数えました', hibi_schedule: '予定を確認しました', hibi_next: '次の予定を確認しました', hibi_free_time: '空き時間を計算しました', hibi_todos: 'やることを確認しました' };
 async function aiAsk(q) {
   if (AIV.busy) return;
   AIV.busy = true;
@@ -1088,6 +1143,8 @@ async function aiAsk(q) {
       else if (ev.type === 'sources') a.src = ev.citations.slice(0, 6).map(c => `${md(c.date)} ${c.type === 'diary' ? '日記' : c.type === 'event' ? '予定' : c.type === 'task' ? 'やること' : 'メモ'}`);
       else if (ev.type === 'answer') { a.wait = false; a.text += ev.text; }
       else if (ev.type === 'tool_result' && ev.result.name === 'hibi_add_event') a.tool = ev.result.ok ? 'ひび手帳に渡しました' : 'ひび手帳への追加';
+      // routes: shown as cards (and remembered, so they can be changed by talking)
+      else if (ev.type === 'tool_result' && /^hibi_route/.test(ev.result.name) && ev.result.ok) { AIV.rt = ev.result.value; AIV.rtSel = 0; lsSet('mainichi.rt', AIV.rt); a.rt = ev.result.value; a.rtAdded = []; }
       aiPaintMsgs(true);
     }
     if (!a.text) { a.wait = false; a.text = '（止めました）'; }
@@ -1124,6 +1181,15 @@ Object.assign(ACT, {
     const chr = $('#cf-chr'); if (chr && !m.confirm.chrTouched) chr.checked = k !== 'tl';
     a.show = k; const sub = $('#cf-show'); if (sub) sub.textContent = SHOW_JA[k]; document.querySelectorAll('.seg [data-act=cfShow]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.k === k)));
   },
+  rtAdd: async t => {
+    const m = AIV.msgs[+t.dataset.m], i = +t.dataset.i, r = m && m.rt && m.rt.routes[i]; if (!r) return;
+    t.disabled = true;
+    try { await addRouteToHibi(r); (m.rtAdded = m.rtAdded || []).push(i); toast(`${hm(r.dep)}〜 の経路をひび手帳に渡しました`); }
+    catch (e) { toast(e.message || '追加できませんでした'); }
+    aiPaintMsgs();
+  },
+  // 「この経路で話す」: what is said next changes this one
+  rtSel: t => { const m = AIV.msgs[+t.dataset.m]; if (!m || !m.rt) return; AIV.rt = m.rt; AIV.rtSel = +t.dataset.i; lsSet('mainichi.rt', AIV.rt); aiPaintMsgs(); },
   aiNo: () => { const m = AIV.msgs.find(x => x.confirm); if (!m) return; const r = m.confirm.resolve; m.confirm = null; m.wait = true; aiPaintMsgs(); r(false); },
   aiNew: async () => { if (AIV.busy) return; AIV.base = null; if (AIV.engine) await AIV.engine.chat.new(); AIV.msgs = []; try { localStorage.removeItem(CONV_KEY); } catch (e) {} aiPaintMsgs(); },
   aiDelete: async () => {
