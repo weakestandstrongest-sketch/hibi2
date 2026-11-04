@@ -497,7 +497,9 @@ function parseChange(q0: string, ctxR: { result: RouteResult; selected: number }
   const via = (q.match(/([^\s、。,，「」]+?)(?:駅)?経由/) ?? [])[1];
   if (via) return { mode: "via", i, via };
   const km = q.match(KIND_RE);
-  if (km) {
+  // a kind of train alone is not enough (「普通に楽しかった」): the train, the section or a station of the route must be talked about too
+  const aboutRoute = /電車|列車|線|行き?の|行きで|行に|区間|駅|乗|経路|ルート|にしたい|に変え|にして|で行/.test(q) || r.steps.some((x) => x.k === "s" && rtNorm(x.name).length >= 2 && q.includes(rtNorm(x.name)));
+  if (km && aboutRoute) {
     // 「普通の岐阜行」「岐阜行きの普通」
     const dm = q.match(new RegExp(`${km[1]}(?:の|で)?\\s*([^\\s、。のでにを]{1,8}?)行き?`)) ?? q.match(new RegExp(`([^\\s、。のでにを]{1,8}?)行き?の\\s*${km[1]}`));
     const sts = r.steps.filter((x) => x.k === "s").map((x) => x.name);

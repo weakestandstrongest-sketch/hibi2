@@ -1002,6 +1002,9 @@ const hibiSource = {
 };
 const AIV = { mod: null, engine: null, booting: null, err: '', status: { state: 'uninitialized' }, msgs: [], busy: false, model: null, base: null, rt: lsGet('mainichi.rt'), rtSel: 0 };
 const CONV_KEY = 'mainichi.conv';
+// what is left of a follow-up once the words of a period and of small talk are taken out: nothing (or a letter) for a real follow-up
+const FOLLOW_WORDS = /今日|きょう|明日|あした|昨日|きのう|明後日|あさって|一昨日|おととい|今週|来週|先週|再来週|今月|来月|先月|今年|来年|去年|昨年|[0-9０-９]+|[一二三四五六七八九十]+|年|月|日|週|曜日?|[月火水木金土]曜|半|時|分|から|まで|の|は|で|が|に|と|も|って|なら|だと|だったら|では|じゃあ|じゃ|あ|え|ね|よ|か|かな|？|\?|！|!|、|。|,|\.|\s/g;
+const isFollowUp = q => q.length <= 30 && /[0-9０-９]|今日|きょう|明日|あした|昨日|きのう|明後日|あさって|一昨日|おととい|週|月|年|曜/.test(q) && q.replace(FOLLOW_WORDS, '').length <= 1 && !/日記|メモ|記事|ニュース|天気|場所|曲|気持ち|予定を|追加|入れて/.test(q);
 const SUGG = ['今日の予定は？', '次の予定は？', '明日の予定は？', '今日の空き時間は？', 'やることは？', '明日15時から17時までバイトを追加して', '名古屋から岐阜までの経路を調べて', '先週の日記をふりかえって'];
 async function aiBoot() {
   if (AIV.engine) return AIV.engine;
@@ -1135,8 +1138,9 @@ async function aiAsk(q) {
     // (not when the follow-up brings its own subject: 「昨日の日記は？」 is a new question, not a follow-up)
     let ask = q;
     if (e.hibiRoutes(q)) AIV.base = q;
-    // and only when it changes something: a day, week, month or year (not 「ありがとう」)
-    else if (AIV.base && q.length <= 30 && /\d|[0-9０-９]|今日|明日|昨日|明後日|あさって|一昨日|おととい|週|月|年|曜/.test(q) && !/日記|メモ|記事|天気|場所|曲|気持ち|予定を|追加|入れて/.test(q)) { const c = q + AIV.mod.FOLLOW + AIV.base; if (e.hibiRoutes(c)) ask = c; }
+    // and only when it is about nothing but a period: 「あ、4月から10月ね」「じゃあ先月は？」「6月だと？」「明日は？」
+    // (「今日のニュースは？」「ありがとう」are new questions, not follow-ups)
+    else if (AIV.base && isFollowUp(q)) { const c = q + AIV.mod.FOLLOW + AIV.base; if (e.hibiRoutes(c)) ask = c; }
     // always look through ひび手帳's records (the engine's own guess of 'is this about my records?' misses 習慣・家計簿・場所…)
     for await (const ev of e.streamEvents(ask, { useMemory: true, confirmTool: call => aiConfirm(a, call) })) {
       if (ev.type === 'tool_call') a.tool = TOOL_JA[ev.call.name] || 'ひび手帳を調べました';
