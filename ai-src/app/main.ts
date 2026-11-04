@@ -84,6 +84,8 @@ export interface HibiSource {
   more(): Record<string, any>;
   /** 大学（時間割・出席・学期） */
   school(): Record<string, any>;
+  /** 週の始まり（ひび手帳の設定） */
+  weekStartsSunday(): boolean;
   /** Every event's definition, for questions without a date (「最後にジムに行ったのは？」). */
   events(): Array<{ id: string; title: string; date: string; start?: string; end?: string; allDay?: boolean; repeat?: string; memo?: string }>;
 }
@@ -439,6 +441,125 @@ function moneyTool(src: HibiSource): AITool<MoneyArgs & Record<string, unknown>,
   };
 }
 
+// ---------------------------------------------------------------- 習慣（灯）and 出席 (exact counts, no model; same rules as ひび手帳)
+/** a value of a habit as people read it: time habits are kept in seconds */
+function hbAmount(h: any, v: number): string {
+  if (h.kind === "time") { const m = Math.round(v / 60); return m >= 60 ? `${Math.floor(m / 60)}時間${m % 60 ? `${m % 60}分` : ""}` : m >= 1 ? `${m}分` : `${Math.round(v)}秒`; }
+  return `${Math.round(v * 10) / 10}${h.unit ?? (h.kind === "count" ? "回" : "")}`;
+}
+function habitCalc(src: HibiSource, h: any, t: string) {
+  const log = obj(obj(src.more().habits).log), goal = +h.goal || 1, f = obj(h.freq), created = typeof h.c === "string" ? h.c : "0000-00-00";
+  const val = (d: string) => +(obj(obj(log[d])[h.id]).v ?? 0) || 0;
+  const done = (d: string) => val(d) >= goal, rest = (d: string) => !!obj(obj(log[d])[h.id]).skip && !done(d);
+  const wdOf = (d: string) => new Date(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10)).getDay();
+  const sched = (d: string) => d >= created && (f.t !== "days" || arr(f.days).includes(wdOf(d)));
+  const sun = src.weekStartsSunday(), weekStart = (d: string) => addDays(d, -(sun ? wdOf(d) : (wdOf(d) + 6) % 7));
+  const weekCnt = (ws: string) => { let n = 0; for (let i = 0; i < 7; i++) if (done(addDays(ws, i))) n++; return n; };
+  const weekly = f.t === "week", need = Math.max(1, +f.n || 3);
+  let streak = 0, best = 0;
+  if (weekly) {
+    let ws = weekStart(t); if (weekCnt(ws) >= need) streak++;
+    for (ws = addDays(ws, -7); addDays(ws, 6) >= created && weekCnt(ws) >= need; ws = addDays(ws, -7)) streak++;
+    let cur = 0; for (let w = weekStart(created < "2000" ? addDays(t, -730) : created); w <= t; w = addDays(w, 7)) { if (weekCnt(w) >= need) best = Math.max(best, ++cur); else if (addDays(w, 6) < t) cur = 0; }
+  } else {
+    let d = done(t) ? t : addDays(t, -1);
+    for (let i = 0; i < 4000 && d >= created; i++, d = addDays(d, -1)) { if (!sched(d) || rest(d)) continue; if (done(d)) streak++; else break; }
+    let cur = 0; for (let d2 = created < "2000" ? addDays(t, -730) : created, i = 0; d2 <= t && i < 4000; d2 = addDays(d2, 1), i++) { if (!sched(d2) || rest(d2)) continue; if (done(d2)) best = Math.max(best, ++cur); else if (d2 < t) cur = 0; }
+  }
+  const span = (from: string, to: string) => {
+    let n = 0, planned = 0, skipped = 0, total = 0;
+    for (let d = from < created ? created : from, i = 0; d <= to && i < 4000; d = addDays(d, 1), i++) { total += val(d); if (done(d)) n++; if (rest(d)) skipped++; else if (sched(d)) planned++; }
+    return { n, planned, skipped, total };
+  };
+  const last = Object.keys(log).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && d <= t && done(d)).sort().pop();
+  return { weekly, need, streak, best, span, last, thisWeek: weekCnt(weekStart(t)), weekStart: weekStart(t) };
+}
+function habitTool(src: HibiSource): AITool<{ ids: string[]; from?: string; to?: string; label: string } & Record<string, unknown>, string> {
+  return {
+    name: "hibi_habits",
+    description: "ひび手帳の習慣（灯）が、期間の中で何日できたか・連続・最長・最後にできた日を数える",
+    access: "read",
+    whenToUse: [/習慣|灯|続い|連続/],
+    answersWithoutRecords: true,
+    parameters: { type: "object", properties: { ids: { type: "array", items: { type: "string" } }, from: { type: "string" }, to: { type: "string" }, label: { type: "string" } }, required: ["ids"] },
+    route(question, ctx) {
+      if (!src.ready()) return undefined;
+      const q = question.normalize("NFKC"), list = arr(obj(src.more().habits).list).filter((h) => h && h.name);
+      if (!list.length || /予定|スケジュール|追加|入れて|登録/.test(q)) return undefined;
+      const named = list.filter((h) => q.includes(String(h.name)));
+      if (!named.length && !/習慣|灯/.test(q)) return undefined;
+      if (named.length && !/習慣|灯|何回|何日|回数|日数|続い|連続|できた|できて|やった|やって|達成|記録|サボ|さぼ|最後|いつ|どれくらい|どのくらい|ペース/.test(q)) return undefined;
+      const r = moneyRange(q, today(ctx));
+      return { ids: (named.length ? named : list.filter((h) => !h.arch)).map((h) => String(h.id)), ...(r.from ? { from: r.from } : {}), ...(r.to ? { to: r.to } : {}), label: r.label };
+    },
+    formatAnswer(result) { return result.ok ? result.value : `習慣の記録を読めませんでした（${result.error}）。`; },
+    async execute(args, ctx) {
+      if (!src.ready()) throw new Error("ひび手帳のデータがまだ読み込まれていません");
+      const t = today(ctx), list = arr(obj(src.more().habits).list).filter((h) => args.ids.includes(String(h.id)));
+      if (!list.length) return "習慣（灯）はまだ登録されていません。";
+      return list.map((h) => {
+        const c = habitCalc(src, h, t), f = obj(h.freq);
+        const fq = f.t === "days" ? `${arr(f.days).map((w: number) => WD_[w]).join("・")}曜日` : c.weekly ? `週${c.need}回` : "毎日";
+        const lines: string[] = [];
+        if (args.from || args.to) {
+          const s = c.span(args.from ?? "0000-00-00", args.to ?? t);
+          const thisWeek = c.weekly && args.from === c.weekStart ? (s.n >= c.need ? "（今週の目標達成）" : `（あと${c.need - s.n}回で今週の目標）`) : "";
+          lines.push(`${args.label}：${s.n}日できた${thisWeek}${!c.weekly && s.planned ? `（予定の${s.planned}日のうち）` : ""}${s.skipped ? `・休み${s.skipped}日` : ""}${h.kind !== "check" && s.total ? `・合計 ${hbAmount(h, s.total)}` : ""}`);
+        } else {
+          if (c.weekly) lines.push(`今週：${c.thisWeek}回${c.thisWeek >= c.need ? "（目標達成）" : `（あと${c.need - c.thisWeek}回で目標）`}`);
+          const m = c.span(addDays(t, -6), t), mm = c.span(addDays(t, -29), t);
+          lines.push(`直近7日：${m.n}日・直近30日：${mm.n}日${h.kind !== "check" && mm.total ? `（30日の合計 ${hbAmount(h, mm.total)}）` : ""}`);
+        }
+        lines.push(`連続：${c.streak}${c.weekly ? "週" : "日"}（いちばん長い連続：${c.best}${c.weekly ? "週" : "日"}）`);
+        lines.push(c.last ? `最後にできた日：${dayJa(c.last)}` : "まだできた日はありません");
+        return `${h.emoji ?? ""}${h.name}（${fq}${h.kind !== "check" ? `・目標 ${hbAmount(h, +h.goal || 1)}` : ""}${h.arch ? "・アーカイブ" : ""}）\n${lines.map((l) => `・${l}`).join("\n")}`;
+      }).join("\n\n");
+    },
+  };
+}
+function attendanceTool(src: HibiSource): AITool<{ ids: string[]; from?: string; to?: string; label: string } & Record<string, unknown>, string> {
+  return {
+    name: "hibi_attendance",
+    description: "ひび手帳の時間割の出席・遅刻・欠席・休講を数え、あと何回休めるかを出す",
+    access: "read",
+    whenToUse: [/出席|欠席|遅刻|休める|休講|単位/],
+    answersWithoutRecords: true,
+    parameters: { type: "object", properties: { ids: { type: "array", items: { type: "string" } }, from: { type: "string" }, to: { type: "string" }, label: { type: "string" } }, required: ["ids"] },
+    route(question, ctx) {
+      if (!src.ready()) return undefined;
+      const q = question.normalize("NFKC"), classes = arr(src.school().classes).filter((c) => c && c.name);
+      if (!classes.length || /予定|スケジュール|追加|入れて|登録/.test(q)) return undefined;
+      const ask = /出席|欠席|遅刻|休め|休んだ|休講|単位|サボ|さぼ|出た|出てる/.test(q);
+      const named = classes.filter((c) => q.includes(String(c.name)) || (String(c.name).replace(/[（(].*$/, "").length >= 2 && q.includes(String(c.name).replace(/[（(].*$/, ""))));
+      if (!ask) return undefined;
+      const r = moneyRange(q, today(ctx));
+      return { ids: (named.length ? named : classes).map((c) => String(c.id)), ...(r.from ? { from: r.from } : {}), ...(r.to ? { to: r.to } : {}), label: r.label };
+    },
+    formatAnswer(result) { return result.ok ? result.value : `出席の記録を読めませんでした（${result.error}）。`; },
+    async execute(args) {
+      if (!src.ready()) throw new Error("ひび手帳のデータがまだ読み込まれていません");
+      const sc = src.school(), rule = +sc.lateRule || 0;
+      const list = arr(sc.classes).filter((c) => args.ids.includes(String(c.id)));
+      const out = list.map((c) => {
+        const all = Object.entries(obj(c.att)) as Array<[string, string]>;
+        const inR = (k: string) => (!args.from || k.slice(0, 10) >= args.from) && (!args.to || k.slice(0, 10) <= args.to);
+        const cnt = (xs: Array<[string, string]>) => { const n = (s: string) => xs.filter(([, v]) => v === s).length; return { present: n("present"), late: n("late"), absent: n("absent"), cancel: n("cancel") }; };
+        const a = cnt(all), used = a.absent + (rule ? Math.floor(a.late / rule) : 0), max = +c.maxAbsent || 0, left = max - used;
+        const when = arr(c.slots).map((sl: any) => `${WD_[sl.w]}曜${+sl.p + 1}限`).join("・");
+        const lines: string[] = [];
+        if (args.from || args.to) { const p = cnt(all.filter(([k]) => inR(k))); lines.push(`${args.label}：出席${p.present}・遅刻${p.late}・欠席${p.absent}・休講${p.cancel}`); }
+        lines.push(`${args.from || args.to ? "これまで全部" : "これまで"}：出席${a.present}・遅刻${a.late}・欠席${a.absent}・休講${a.cancel}`);
+        const held = a.present + a.late + a.absent;
+        if (held) lines.push(`出席率：${Math.round(((a.present + a.late) / held) * 100)}%（遅刻も出席として）`);
+        lines.push(`欠席として数える回数：${used}回${rule ? `（遅刻${rule}回で欠席1回）` : ""}`);
+        lines.push(!max ? "休める回数の上限は、まだ決めていません（ひび手帳の授業の画面で決められます）" : left > 1 ? `あと${left}回休めます（上限${max}回）` : left === 1 ? `あと1回だけ休めます（上限${max}回）` : left === 0 ? `もう休めません（上限${max}回）` : `上限（${max}回）を${-left}回こえています`);
+        return `${c.name}${c.room ? `（${c.room}）` : ""}${when ? ` ${when}` : ""}\n${lines.map((l) => `・${l}`).join("\n")}`;
+      });
+      return out.length ? out.join("\n\n") : "時間割に授業がありません。";
+    },
+  };
+}
+
 // ---------------------------------------------------------------- records for everything else (RAG)
 function match(rec: MemoryRecord, words: string[]): boolean {
   if (!words.length) return true;
@@ -544,10 +665,10 @@ function records(src: HibiSource, q: MemoryQuery, now: Date): MemoryRecord[] {
       const cnt = (n: number) => Array.from({ length: n }, (_, i) => addDays(tday, -i)).filter((d) => doneOn(h, d)).length;
       const freq = obj(h.freq), fq = freq.t === "days" ? `${arr(freq.days).map((w: number) => WD_[w]).join("・")}曜日` : freq.t === "week" ? `週${freq.n}回` : "毎日";
       add({ id: `habit:${h.id}`, type: "habit", title: `習慣：${h.name}`, occurredAt: last ?? tday,
-        content: `習慣（灯）：${h.emoji ?? ""}${h.name}（${fq}${h.kind !== "check" ? `・目標 ${h.goal}${h.unit ?? ""}` : ""}${h.arch ? "・アーカイブ" : ""}）\n直近7日で${cnt(7)}日・30日で${cnt(30)}日 できた${last ? `。最後にできた日：${dayJa(last)}` : ""}` });
+        content: `習慣（灯）：${h.emoji ?? ""}${h.name}（${fq}${h.kind !== "check" ? `・目標 ${hbAmount(h, +h.goal)}` : ""}${h.arch ? "・アーカイブ" : ""}）\n直近7日で${cnt(7)}日・30日で${cnt(30)}日 できた${last ? `。最後にできた日：${dayJa(last)}` : ""}` });
     }
     for (const d of days) {
-      const o = obj(log[d]), parts = list.map((h) => { const v = obj(o[h.id]); return v.skip ? `${h.name}：休み` : +(v.v ?? 0) > 0 ? `${h.name}：${doneOn(h, d) ? "できた" : `${v.v}${h.unit ?? ""}`}` : ""; }).filter(Boolean);
+      const o = obj(log[d]), parts = list.map((h) => { const v = obj(o[h.id]); return v.skip ? `${h.name}：休み` : +(v.v ?? 0) > 0 ? `${h.name}：${doneOn(h, d) ? "できた" : hbAmount(h, +v.v)}` : ""; }).filter(Boolean);
       if (parts.length) add({ id: `habit:${d}`, type: "habit", title: `${dayJa(d)}の習慣`, occurredAt: d, content: `${dayJa(d)}の習慣（灯）\n${parts.join("\n")}` });
     }
     // 授業（時間割・出席）
@@ -618,7 +739,7 @@ export function createHibiAI(src: HibiSource): PersonalAI {
     async searchData(q) {
       return records(src, q, new Date());
     },
-    getTools: () => [addTool(src), moneyTool(src), nextTool(src), freeTool(src), todoTool(src), scheduleTool(src)] as unknown as AITool[],
+    getTools: () => [addTool(src), moneyTool(src), habitTool(src), attendanceTool(src), nextTool(src), freeTool(src), todoTool(src), scheduleTool(src)] as unknown as AITool[],
   });
   return new PersonalAI({
     appId: APP_ID,
