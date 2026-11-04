@@ -961,7 +961,7 @@ const hibiSource = {
   school: () => S.school || {},
   events: () => S.events.filter(e => e && e.date).map(e => ({ id: e.id, title: e.title, date: e.date, start: e.start, end: e.end, allDay: !!e.allDay, repeat: e.repeat, memo: e.memo })),
 };
-const AIV = { mod: null, engine: null, booting: null, err: '', status: { state: 'uninitialized' }, msgs: [], busy: false, model: null };
+const AIV = { mod: null, engine: null, booting: null, err: '', status: { state: 'uninitialized' }, msgs: [], busy: false, model: null, base: null };
 const CONV_KEY = 'mainichi.conv';
 const SUGG = ['今日の予定は？', '次の予定は？', '明日の予定は？', '今日の空き時間は？', 'やることは？', '明日15時から17時までバイトを追加して', '先週の日記をふりかえって'];
 async function aiBoot() {
@@ -977,7 +977,7 @@ async function aiBoot() {
       if (/[?&]debug\b/.test(location.search)) window.__mainichiSearch = q => e.config.adapter.searchData(q);
       // back to the last conversation
       let id = ''; try { id = localStorage.getItem(CONV_KEY) || ''; } catch (err) {}
-      if (id) { try { AIV.msgs = (await e.chat.open(id)).filter(m => m.role === 'user' || m.role === 'assistant').map(m => ({ who: m.role === 'user' ? 'me' : 'ai', text: m.content })); } catch (err) { try { localStorage.removeItem(CONV_KEY); } catch (er) {} } }
+      if (id) { try { AIV.msgs = (await e.chat.open(id)).filter(m => m.role === 'user' || m.role === 'assistant').map(m => ({ who: m.role === 'user' ? 'me' : 'ai', text: m.role === 'user' ? String(m.content).split(AIV.mod.FOLLOW)[0] : m.content })); } catch (err) { try { localStorage.removeItem(CONV_KEY); } catch (er) {} } }
       // already downloaded: get it ready right away
       if (AIV.model && await e.models.isCached(AIV.model.id).catch(() => false) && aiCheck().ok) aiLoad();
       return e;
@@ -1075,8 +1075,15 @@ async function aiAsk(q) {
   try {
     const e = await aiBoot();
     if (!S) throw Object.assign(new Error(), { code: 'NO_DATA' });
+    // a short follow-up (「あ、4月から10月ね」) that cannot be answered alone: ask it together with the last question one of
+    // ひび手帳's exact tools answered (its own period first), instead of letting the small model guess the numbers
+    // (not when the follow-up brings its own subject: 「昨日の日記は？」 is a new question, not a follow-up)
+    let ask = q;
+    if (e.hibiRoutes(q)) AIV.base = q;
+    // and only when it changes something: a day, week, month or year (not 「ありがとう」)
+    else if (AIV.base && q.length <= 30 && /\d|[0-9０-９]|今日|明日|昨日|明後日|あさって|一昨日|おととい|週|月|年|曜/.test(q) && !/日記|メモ|記事|天気|場所|曲|気持ち|予定を|追加|入れて/.test(q)) { const c = q + AIV.mod.FOLLOW + AIV.base; if (e.hibiRoutes(c)) ask = c; }
     // always look through ひび手帳's records (the engine's own guess of 'is this about my records?' misses 習慣・家計簿・場所…)
-    for await (const ev of e.streamEvents(q, { useMemory: true, confirmTool: call => aiConfirm(a, call) })) {
+    for await (const ev of e.streamEvents(ask, { useMemory: true, confirmTool: call => aiConfirm(a, call) })) {
       if (ev.type === 'tool_call') a.tool = TOOL_JA[ev.call.name] || 'ひび手帳を調べました';
       else if (ev.type === 'sources') a.src = ev.citations.slice(0, 6).map(c => `${md(c.date)} ${c.type === 'diary' ? '日記' : c.type === 'event' ? '予定' : c.type === 'task' ? 'やること' : 'メモ'}`);
       else if (ev.type === 'answer') { a.wait = false; a.text += ev.text; }
@@ -1118,7 +1125,7 @@ Object.assign(ACT, {
     a.show = k; const sub = $('#cf-show'); if (sub) sub.textContent = SHOW_JA[k]; document.querySelectorAll('.seg [data-act=cfShow]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.k === k)));
   },
   aiNo: () => { const m = AIV.msgs.find(x => x.confirm); if (!m) return; const r = m.confirm.resolve; m.confirm = null; m.wait = true; aiPaintMsgs(); r(false); },
-  aiNew: async () => { if (AIV.busy) return; if (AIV.engine) await AIV.engine.chat.new(); AIV.msgs = []; try { localStorage.removeItem(CONV_KEY); } catch (e) {} aiPaintMsgs(); },
+  aiNew: async () => { if (AIV.busy) return; AIV.base = null; if (AIV.engine) await AIV.engine.chat.new(); AIV.msgs = []; try { localStorage.removeItem(CONV_KEY); } catch (e) {} aiPaintMsgs(); },
   aiDelete: async () => {
     if (!AIV.engine || !AIV.model) return;
     if (!confirm('ダウンロードしたAIを、この端末から削除しますか？（約1GB空きます。また使うときは、ダウンロードし直します）')) return;

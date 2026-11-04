@@ -108,8 +108,21 @@ const itemLine = (x: DayItem) =>
   (x.route ? `（${x.route}）` : "") +
   (x.done ? "【完了】" : "");
 
+/**
+ * A follow-up such as 「あ、4月から10月ね」 says too little to be answered on its own. The page asks it as
+ * `${follow-up}${FOLLOW}${the question before}`: names (外食費, ジム…) may come from either part, but a period
+ * named in the follow-up wins over the one in the question before.
+ */
+export const FOLLOW = "\n|||\n"; // no words in it (and unchanged by NFKC): tools must not read anything into it
+function periodFirst<T>(question: string, read: (q: string) => T | undefined): T | undefined {
+  const [now, before] = question.split(FOLLOW);
+  return before === undefined ? read(question) : read(now!) ?? read(before);
+}
 /** The day (or days) a question is about; undefined when it names none. */
 function daysOf(question: string, ctx: ToolContext): { from: string; to: string; label: string } | undefined {
+  return periodFirst(question, (q) => daysOfOne(q, ctx));
+}
+function daysOfOne(question: string, ctx: ToolContext): { from: string; to: string; label: string } | undefined {
   const t = today(ctx);
   const q = question.normalize("NFKC");
   if (/明後日|あさって/.test(q)) { const d = addDays(t, 2); return { from: d, to: d, label: "あさって" }; }
@@ -365,6 +378,9 @@ interface MoneyArgs { from?: string; to?: string; label: string; kind: "out" | "
 const lastDay = (y: number, m: number) => new Date(y, m, 0).getDate();
 /** 「4月から今日まで」「この4月から」「4月から9月まで」「先月」「今年」… → a range; none = every record */
 function moneyRange(q: string, t: string): { from?: string; to?: string; label: string } {
+  return periodFirst(q, (x) => { const r = moneyRangeOne(x, t); return r.from || r.to ? r : undefined; }) ?? { label: "これまで" };
+}
+function moneyRangeOne(q: string, t: string): { from?: string; to?: string; label: string } {
   const ty = +t.slice(0, 4), tm = +t.slice(5, 7);
   const ymOf = (m: number) => (m <= tm ? ty : ty - 1); // a month without a year: the latest one so far
   const two = q.match(/(\d{1,2})月(?:(\d{1,2})日)?から(\d{1,2})月(?:(\d{1,2})日)?(まで)?/);
@@ -727,7 +743,7 @@ function records(src: HibiSource, q: MemoryQuery, now: Date): MemoryRecord[] {
 // ---------------------------------------------------------------- engine
 export const RECOMMENDED_MODEL = { id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", contextLength: 2048, label: "Qwen2.5 1.5B" } as const;
 
-export function createHibiAI(src: HibiSource): PersonalAI {
+export function createHibiAI(src: HibiSource): PersonalAI & { hibiRoutes(question: string): boolean } {
   const adapter = defineAdapter({
     appId: APP_ID,
     appName: "ひび手帳",
@@ -735,19 +751,28 @@ export function createHibiAI(src: HibiSource): PersonalAI {
       "あなたは手帳アプリ「ひび手帳」のアシスタント「まいにち」です。日本語で、やさしく簡潔に答えてください。" +
       "予定・日記・やることについては、渡された記録だけを根拠にし、記録にないことは「記録にはありません」と答えてください。" +
       "予定の追加は、ツールを使って頼まれたときだけ行います。予定の変更や削除はできないので、ひび手帳で行うよう伝えてください。" +
+      "金額・回数・日付などの数は、渡された記録にあるものだけを使い、計算したり作ったりしないでください。記録から分からないときは、そう伝えて、家計簿なら「4月から10月の外食費はいくら？」のように聞き直してもらってください。" +
       (src.ready() && src.more().name ? `ユーザーの名前は「${src.more().name}」です。` : ""),
     async searchData(q) {
       return records(src, q, new Date());
     },
-    getTools: () => [addTool(src), moneyTool(src), habitTool(src), attendanceTool(src), nextTool(src), freeTool(src), todoTool(src), scheduleTool(src)] as unknown as AITool[],
+    getTools: () => tools,
   });
-  return new PersonalAI({
+  const tools = [addTool(src), moneyTool(src), habitTool(src), attendanceTool(src), nextTool(src), freeTool(src), todoTool(src), scheduleTool(src)] as unknown as AITool[];
+  const engine = new PersonalAI({
     appId: APP_ID,
     adapter,
     timeZone: TZ,
     generation: { temperature: 0.6, maxTokens: 512 },
     backends: {
       webllm: { createWorker: () => new Worker(new URL("./webllm.worker.ts", import.meta.url), { type: "module" }) },
+    },
+  });
+  return Object.assign(engine, {
+    /** Would one of ひび手帳's exact tools answer this (without the model)? The page uses it for follow-ups. */
+    hibiRoutes(question: string): boolean {
+      const ctx = { appId: APP_ID, now: new Date(), timeZone: TZ };
+      return tools.some((t) => { try { return !!t.route?.(question, ctx); } catch { return false; } });
     },
   });
 }
