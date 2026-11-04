@@ -417,7 +417,7 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); retu
 let gd = lsGet(GD_KEY) || {};
 const gdPut = o => { gd = { ...gd, ...o }; lsSet(GD_KEY, gd); };
 // what the timeline and the AI need (the diary's words only: no photos, no songs)
-const DATA_V = 3;
+const DATA_V = 4;
 let D = lsGet(DATA_KEY); // { S, at (when hibi.json was saved), got (when we read it), src, fid, v }
 const pickMoney = m => {
   m = m && typeof m === 'object' ? m : {};
@@ -425,9 +425,36 @@ const pickMoney = m => {
   return { cats: { out: cl(cats.out), in: cl(cats.in) },
     entries: (Array.isArray(m.entries) ? m.entries : []).filter(e => e && /^\d{4}-\d{2}-\d{2}$/.test(e.date) && Number.isFinite(+e.amt)).map(e => ({ k: e.k === 'in' ? 'in' : 'out', amt: Math.abs(Math.round(+e.amt)), cat: String(e.cat ?? ''), memo: String(e.memo ?? ''), date: e.date })) };
 };
-const pick = s => ({
+// everything else ひび手帳 has, for the AI: photos, cover art and other media left out (large, and the AI cannot use them)
+const MEDIA_KEY = /^(photo|photos|artData|art|img|image|thumb|blob)$/;
+const cleanAll = (x, depth = 0) => {
+  if (depth > 8 || x == null) return x;
+  if (typeof x === 'string') return /^(data:|idb:|blob:)/.test(x) ? undefined : x.length > 4000 ? x.slice(0, 4000) : x;
+  if (Array.isArray(x)) return x.map(y => cleanAll(y, depth + 1)).filter(y => y !== undefined);
+  if (typeof x === 'object') { const o = {}; for (const [k, v] of Object.entries(x)) { if (MEDIA_KEY.test(k)) continue; const c = cleanAll(v, depth + 1); if (c !== undefined) o[k] = c; } return o; }
+  return x;
+};
+const parseJSON = t => { try { return typeof t === 'string' ? JSON.parse(t) : t; } catch (e) { return null; } };
+// Asterism（メモ）と 凪（保存した記事）: ひび手帳のバックアップに入っている分（同じ Safari なら、その場のものも）
+function pickApps(apps) {
+  const get = (app, key) => { const a = apps && apps[app]; if (a && a[key] != null) return parseJSON(a[key]); try { return parseJSON(localStorage.getItem(key)); } catch (e) { return null; } };
+  const ast = get('asterism', 'my-universe:data:v1'), ng = get('nagi', 'mynews:saved');
+  return { asterism: cleanAll(ast && Array.isArray(ast.notes) ? ast.notes : []), nagi: cleanAll(ng && typeof ng === 'object' ? (Array.isArray(ng) ? ng : Object.values(ng)) : []) };
+}
+const pickMore = (s, o) => cleanAll({
+  name: s.settings && typeof s.settings.name === 'string' ? s.settings.name : '',
+  tasks: s.tasks, templates: s.templates, jobs: s.jobs, places: s.places, spots: s.spots, notes: s.notes, habits: s.habits,
+  customFeelings: s.customFeelings, customTags: s.customTags,
+  money: s.money ? { budget: s.money.budget, fixed: s.money.fixed, accts: s.money.accts, hist: s.money.hist } : {},
+  chronos: o && o.chronos && Array.isArray(o.chronos.events) ? o.chronos.events.filter(e => e && !e.isSample) : [],
+  ...pickApps(o && o.apps),
+});
+const pick = (s, o) => ({
+  more: pickMore(s, o),
   money: pickMoney(s.money),
-  entries: (Array.isArray(s.entries) ? s.entries : []).filter(e => e && typeof e.date === 'string').map(e => ({ id: String(e.id || e.date), date: e.date, time: e.time || '', text: typeof e.text === 'string' ? e.text : '', feelings: Array.isArray(e.feelings) ? e.feelings : [], tags: Array.isArray(e.tags) ? e.tags : [] })),
+  entries: (Array.isArray(s.entries) ? s.entries : []).filter(e => e && typeof e.date === 'string').map(e => ({ id: String(e.id || e.date), date: e.date, time: e.time || '', text: typeof e.text === 'string' ? e.text : '', feelings: Array.isArray(e.feelings) ? e.feelings : [], tags: Array.isArray(e.tags) ? e.tags : [],
+    ...(e.weather && typeof e.weather === 'object' ? { weather: { code: e.weather.code, temp: e.weather.temp } } : {}), ...(e.place != null ? { place: String(e.place) } : {}),
+    ...(e.song && typeof e.song === 'object' && e.song.title ? { song: { title: String(e.song.title), artist: String(e.song.artist || '') } } : {}) })),
   events: Array.isArray(s.events) ? s.events : [],
   todos: Array.isArray(s.todos) ? s.todos : [],
   school: s.school && typeof s.school === 'object' ? s.school : {},
@@ -578,7 +605,7 @@ async function load(manual) {
     const o = await (await gdFetch(`${GD_API}/${meta.id}?alt=media`)).json();
     const s = o && o.data ? o.data : o;
     if (!s || !Array.isArray(s.events)) throw new Error('shape');
-    setData(s, at, 'drive', meta.id);
+    setData(s, at, 'drive', meta.id, o);
     await ibCheck();
     if (manual) toast('最新の予定を読み込みました');
   } catch (e) {
@@ -589,8 +616,8 @@ async function load(manual) {
     if (manual) toast(err);
   } finally { busy = false; applyTheme(); render(); }
 }
-function setData(s, at, src, fid) {
-  S = pick(s); D = { S, at, got: Date.now(), src, fid, v: DATA_V };
+function setData(s, at, src, fid, o) {
+  S = pick(s, o); D = { S, at, got: Date.now(), src, fid, v: DATA_V };
   if (!lsSet(DATA_KEY, D)) { try { localStorage.removeItem(DATA_KEY); } catch (e) {} }
   applyTheme();
 }
@@ -910,6 +937,8 @@ const hibiSource = {
   entries: () => S.entries || [],
   addEvent: e => addToHibi(e),
   money: () => S.money || { cats: { out: [], in: [] }, entries: [] },
+  more: () => S.more || {},
+  school: () => S.school || {},
   events: () => S.events.filter(e => e && e.date).map(e => ({ id: e.id, title: e.title, date: e.date, start: e.start, end: e.end, allDay: !!e.allDay, repeat: e.repeat, memo: e.memo })),
 };
 const AIV = { mod: null, engine: null, booting: null, err: '', status: { state: 'uninitialized' }, msgs: [], busy: false, model: null };
@@ -924,6 +953,8 @@ async function aiBoot() {
       e.on('inference', st => { AIV.status = st; aiPaintCard(); });
       await e.initialize();
       AIV.engine = e; AIV.model = e.models.get(AIV.mod.RECOMMENDED_MODEL.id);
+      // for checking what the AI can find: only with ?debug in the address
+      if (/[?&]debug\b/.test(location.search)) window.__mainichiSearch = q => e.config.adapter.searchData(q);
       // back to the last conversation
       let id = ''; try { id = localStorage.getItem(CONV_KEY) || ''; } catch (err) {}
       if (id) { try { AIV.msgs = (await e.chat.open(id)).filter(m => m.role === 'user' || m.role === 'assistant').map(m => ({ who: m.role === 'user' ? 'me' : 'ai', text: m.content })); } catch (err) { try { localStorage.removeItem(CONV_KEY); } catch (er) {} } }
@@ -1024,7 +1055,8 @@ async function aiAsk(q) {
   try {
     const e = await aiBoot();
     if (!S) throw Object.assign(new Error(), { code: 'NO_DATA' });
-    for await (const ev of e.streamEvents(q, { confirmTool: call => aiConfirm(a, call) })) {
+    // always look through ひび手帳's records (the engine's own guess of 'is this about my records?' misses 習慣・家計簿・場所…)
+    for await (const ev of e.streamEvents(q, { useMemory: true, confirmTool: call => aiConfirm(a, call) })) {
       if (ev.type === 'tool_call') a.tool = TOOL_JA[ev.call.name] || 'ひび手帳を調べました';
       else if (ev.type === 'sources') a.src = ev.citations.slice(0, 6).map(c => `${md(c.date)} ${c.type === 'diary' ? '日記' : c.type === 'event' ? '予定' : c.type === 'task' ? 'やること' : 'メモ'}`);
       else if (ev.type === 'answer') { a.wait = false; a.text += ev.text; }

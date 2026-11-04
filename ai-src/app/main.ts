@@ -48,6 +48,9 @@ export interface DiaryEntry {
   text?: string;
   feelings?: string[];
   tags?: string[];
+  weather?: { code?: number; temp?: number };
+  place?: string; // a spot id
+  song?: { title: string; artist?: string };
 }
 export interface NewEvent {
   title: string;
@@ -77,6 +80,10 @@ export interface HibiSource {
   addEvent(e: NewEvent): Promise<NewEvent>;
   /** ひび手帳の家計簿（支出・収入の記録とカテゴリー） */
   money(): MoneyData;
+  /** ひび手帳のそのほか全部（あとで・テンプレート・バイト先・場所・メモ・習慣・予算・貯金・刻・Asterism・凪…）。形はひび手帳のまま */
+  more(): Record<string, any>;
+  /** 大学（時間割・出席・学期） */
+  school(): Record<string, any>;
   /** Every event's definition, for questions without a date (「最後にジムに行ったのは？」). */
   events(): Array<{ id: string; title: string; date: string; start?: string; end?: string; allDay?: boolean; repeat?: string; memo?: string }>;
 }
@@ -438,38 +445,162 @@ function match(rec: MemoryRecord, words: string[]): boolean {
   const hay = `${rec.title ?? ""} ${rec.content} ${(rec.tags ?? []).join(" ")}`;
   return words.some((w) => hay.includes(w));
 }
+const arr = (x: unknown): any[] => (Array.isArray(x) ? x : []);
+const obj = (x: unknown): Record<string, any> => (x && typeof x === "object" && !Array.isArray(x) ? (x as Record<string, any>) : {});
+const yen = (n: unknown) => `${Math.round(+(n as number) || 0).toLocaleString()}円`;
+const ymdOf = (v: unknown): string | undefined => {
+  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
+  if (typeof v === "number" && v > 1e11) { const d = new Date(v); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+  return undefined;
+};
+/** The words of something whose exact shape is not known (メモ・あとで・凪の記事…): every piece of text in it, without ids, colors and links' noise. */
+function textOf(x: unknown, depth = 0): string {
+  if (depth > 5 || x == null) return "";
+  // leave out ids, colors, links, timestamps and short markers such as a block's type ("p", "h2", "todo")
+  if (typeof x === "string") return /^(#[0-9a-f]{3,8}|[a-z0-9_-]{8,48}|[a-z][a-z0-9_-]{0,7}|https?:\/\/\S+|\d{4}-\d{2}-\d{2}T[\d:.]+Z?)$/i.test(x.trim()) ? "" : x.trim();
+  if (Array.isArray(x)) return x.map((y) => textOf(y, depth + 1)).filter(Boolean).join("\n");
+  if (typeof x === "object") return Object.entries(x as Record<string, unknown>).filter(([k]) => !/^(id|color|icon|emoji|sample|ts|u)$/.test(k)).map(([, v]) => textOf(v, depth + 1)).filter(Boolean).join(" ");
+  return "";
+}
+const firstDate = (o: Record<string, any>) => ymdOf(o.date) ?? ymdOf(o.updatedAt) ?? ymdOf(o.updated) ?? ymdOf(o.savedAt) ?? ymdOf(o.createdAt) ?? ymdOf(o.created) ?? ymdOf(o.ts) ?? ymdOf(o.at);
+const WX = (c?: number) => (c == null ? "" : c === 0 ? "晴れ" : c <= 2 ? "晴れ時々くもり" : c === 3 ? "くもり" : c <= 48 ? "霧" : c <= 67 || (c >= 80 && c <= 82) ? "雨" : c <= 77 || c === 85 || c === 86 ? "雪" : "雷雨");
+const distM = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
+  const R = 6371000, r = Math.PI / 180, dLa = (b.lat - a.lat) * r, dLo = (b.lng - a.lng) * r;
+  const h = Math.sin(dLa / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dLo / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+};
+const WD_ = ["日", "月", "火", "水", "木", "金", "土"];
+
 function records(src: HibiSource, q: MemoryQuery, now: Date): MemoryRecord[] {
   if (!src.ready()) return [];
   const created = now.toISOString(), out: MemoryRecord[] = [];
+  const add = (r: Omit<MemoryRecord, "appId" | "createdAt">) => { if (r.content.trim()) out.push({ ...r, appId: APP_ID, createdAt: created }); };
   const want = (t: string) => !q.types?.length || q.types.includes(t);
   const words = (q.text ?? "").split(/\s+/).filter(Boolean);
-  const r = q.dateRange;
+  const r = q.dateRange, from = r?.from?.slice(0, 10), to = r?.to?.slice(0, 10);
+  const inR = (d?: string) => !r || (!!d && (!from || d >= from) && (!to || d <= to));
+  // the days of the range (at most 62), for things worked out day by day
+  const days: string[] = [];
+  if (from || to) for (let d = from ?? to!, n = 0; d <= (to ?? from!) && n < 62; d = addDays(d, 1), n++) days.push(d);
+  const more = src.more(), spots = arr(more.spots).filter((x) => x && x.name && Number.isFinite(+x.lat) && Number.isFinite(+x.lng));
+  const spotName = (id?: string) => spots.find((x) => String(x.id) === id)?.name;
+
+  // 日記
   if (want("diary"))
     for (const e of src.entries()) {
-      if (r && ((r.from && e.date < r.from.slice(0, 10)) || (r.to && e.date > r.to.slice(0, 10)))) continue;
-      out.push({ id: `diary:${e.id}`, appId: APP_ID, type: "diary", title: `${dayJa(e.date)}の日記`, createdAt: created, occurredAt: e.date,
-        content: [e.feelings?.length ? `気持ち：${e.feelings.join("・")}` : "", e.text ?? ""].filter(Boolean).join("\n"), ...(e.tags?.length ? { tags: e.tags } : {}) });
+      if (!inR(e.date)) continue;
+      add({ id: `diary:${e.id}`, type: "diary", title: `${dayJa(e.date)}の日記`, occurredAt: e.date,
+        content: [e.feelings?.length ? `気持ち：${e.feelings.join("・")}` : "", e.text ?? "", e.weather ? `天気：${WX(e.weather.code)} ${e.weather.temp ?? ""}°` : "",
+          e.place && spotName(e.place) ? `場所：${spotName(e.place)}` : "", e.song ? `曲：${e.song.title}${e.song.artist ? `（${e.song.artist}）` : ""}` : ""].filter(Boolean).join("\n"),
+        ...(e.tags?.length ? { tags: e.tags } : {}) });
     }
+  // 予定（期間があれば、繰り返し・授業も含めて1日ずつ）
   if (want("event")) {
-    if (r?.from || r?.to) {
-      // each day of the range (at most 62), with repeats and classes worked out the same way as the timeline
-      const from = (r.from ?? r.to!).slice(0, 10), to = (r.to ?? r.from!).slice(0, 10);
-      for (let d = from, n = 0; d <= to && n < 62; d = addDays(d, 1), n++) {
+    if (days.length) {
+      for (const d of days) {
         const x = src.day(d);
-        x.allDay.forEach((t, i) => out.push({ id: `ev:${d}:a${i}`, appId: APP_ID, type: "event", title: t, content: `${dayJa(d)} 終日 ${t}`, createdAt: created, occurredAt: d }));
-        x.items.forEach((i, k) => out.push({ id: `ev:${d}:${k}`, appId: APP_ID, type: "event", title: i.title, content: `${dayJa(d)} ${itemLine(i)}${i.memo && i.kind !== "class" ? `\nメモ：${i.memo}` : ""}`, createdAt: created, occurredAt: d }));
+        x.allDay.forEach((t, i) => add({ id: `ev:${d}:a${i}`, type: "event", title: t, content: `${dayJa(d)} 終日 ${t}`, occurredAt: d }));
+        x.items.forEach((i, k) => add({ id: `ev:${d}:${k}`, type: "event", title: i.title, content: `${dayJa(d)} ${itemLine(i)}${i.memo && i.kind !== "class" ? `\nメモ：${i.memo}` : ""}`, occurredAt: d }));
       }
     } else {
       for (const e of src.events())
-        out.push({ id: `ev:${e.id}`, appId: APP_ID, type: "event", title: e.title, createdAt: created, occurredAt: e.date,
+        add({ id: `ev:${e.id}`, type: "event", title: e.title, occurredAt: e.date,
           content: `${dayJa(e.date)}${e.allDay ? " 終日" : e.start ? ` ${hm(e.start)}〜${hm(e.end ?? "")}` : ""} ${e.title}${e.repeat && e.repeat !== "none" ? "（繰り返し）" : ""}${e.memo ? `\nメモ：${e.memo}` : ""}` });
     }
+    // 刻（ひび手帳と同じものは、もう上にある）
+    const have = new Set(src.events().map((e) => `${e.date}|${e.title}`));
+    for (const c of arr(more.chronos)) {
+      const d = ymdOf(c.date); if (!d || !c.title || have.has(`${d}|${c.title}`) || (!days.length ? false : !inR(d))) continue;
+      const tm = (m: unknown) => (Number.isFinite(+(m as number)) ? hhmm(+(m as number)) : "");
+      add({ id: `chr:${c.id ?? d + c.title}`, type: "event", title: String(c.title), occurredAt: d,
+        content: `${dayJa(d)} ${c.allDay ? "終日" : `${tm(c.startMin)}〜${tm(c.endMin)}`} ${c.title}（刻）${c.notes ? `\nメモ：${c.notes}` : ""}${c.location ? `\n場所：${c.location}` : ""}` });
+    }
   }
-  if (want("task"))
-    src.todos().forEach((x, i) => out.push({ id: `todo:${i}:${x.title}`, appId: APP_ID, type: "task", title: x.title, createdAt: created, ...(x.due ? { occurredAt: x.due } : {}),
+  // やること・課題・あとで
+  if (want("task")) {
+    src.todos().forEach((x, i) => add({ id: `todo:${i}:${x.title}`, type: "task", title: x.title, ...(x.due ? { occurredAt: x.due } : {}),
       content: `${x.className ? `［${x.className}］` : ""}${x.title}${x.due ? `（締め切り ${dayJa(x.due)}${x.dueTime ? " " + hm(x.dueTime) : ""}）` : "（期限なし）"}${x.memo ? `\nメモ：${x.memo}` : ""}` }));
-  const hit = out.filter((x) => match(x, words));
-  return (hit.length || !words.length ? hit : out).sort((a, b) => (b.occurredAt ?? "").localeCompare(a.occurredAt ?? "")).slice(0, q.limit ?? 30);
+    for (const t of arr(more.tasks)) {
+      if (!t || !t.title) continue; const d = ymdOf(t.date);
+      if (r && d && !inR(d)) continue;
+      add({ id: `later:${t.id ?? t.title}`, type: "task", title: String(t.title), ...(d ? { occurredAt: d } : {}),
+        content: `あとで：${t.title}${t.done ? "（完了）" : ""}${t.dur ? `（所要${dur(+t.dur)}）` : ""}${d ? `（${dayJa(d)}${t.start ? " " + hm(String(t.start)) : ""}に予定）` : ""}${arr(t.subs ?? t.subtasks).length ? `\nサブタスク：${textOf(t.subs ?? t.subtasks)}` : ""}${t.memo ? `\nメモ：${t.memo}` : ""}` });
+    }
+  }
+  // メモ（ひび手帳のメモ・Asterism）
+  if (want("memo")) {
+    for (const [i, n] of arr(more.notes).entries()) { const d = firstDate(obj(n)); if (r && d && !inR(d)) continue; add({ id: `note:${n?.id ?? i}`, type: "memo", title: String(n?.title || "メモ"), ...(d ? { occurredAt: d } : {}), content: `ひび手帳のメモ\n${textOf(n)}` }); }
+    for (const [i, n] of arr(more.asterism).entries()) { const d = firstDate(obj(n)); if (r && d && !inR(d)) continue; add({ id: `ast:${n?.id ?? i}`, type: "memo", title: String(n?.title || "Asterism のメモ"), ...(d ? { occurredAt: d } : {}), content: `Asterism のメモ\n${textOf(n)}` }); }
+  }
+  if (!q.types?.length) {
+    // 凪（保存した記事）
+    for (const [i, a] of arr(more.nagi).entries()) { const d = firstDate(obj(a)); if (r && d && !inR(d)) continue; add({ id: `nagi:${a?.id ?? i}`, type: "news", title: String(a?.title || "保存した記事"), ...(d ? { occurredAt: d } : {}), content: `凪で保存した記事\n${textOf(a)}` }); }
+    // 習慣（灯）
+    const hb = obj(more.habits), list = arr(hb.list).filter((h) => h && h.name), log = obj(hb.log);
+    const doneOn = (h: any, d: string) => { const v = obj(obj(log[d])[h.id]); return !v.skip && +(v.v ?? 0) >= (+h.goal || 1); };
+    const tday = dayOf(now, TZ);
+    for (const h of r ? [] : list) { // the summary of each habit; a question about some days gets those days' log below
+      const last = Object.keys(log).filter((d) => doneOn(h, d)).sort().pop();
+      const cnt = (n: number) => Array.from({ length: n }, (_, i) => addDays(tday, -i)).filter((d) => doneOn(h, d)).length;
+      const freq = obj(h.freq), fq = freq.t === "days" ? `${arr(freq.days).map((w: number) => WD_[w]).join("・")}曜日` : freq.t === "week" ? `週${freq.n}回` : "毎日";
+      add({ id: `habit:${h.id}`, type: "habit", title: `習慣：${h.name}`, occurredAt: last ?? tday,
+        content: `習慣（灯）：${h.emoji ?? ""}${h.name}（${fq}${h.kind !== "check" ? `・目標 ${h.goal}${h.unit ?? ""}` : ""}${h.arch ? "・アーカイブ" : ""}）\n直近7日で${cnt(7)}日・30日で${cnt(30)}日 できた${last ? `。最後にできた日：${dayJa(last)}` : ""}` });
+    }
+    for (const d of days) {
+      const o = obj(log[d]), parts = list.map((h) => { const v = obj(o[h.id]); return v.skip ? `${h.name}：休み` : +(v.v ?? 0) > 0 ? `${h.name}：${doneOn(h, d) ? "できた" : `${v.v}${h.unit ?? ""}`}` : ""; }).filter(Boolean);
+      if (parts.length) add({ id: `habit:${d}`, type: "habit", title: `${dayJa(d)}の習慣`, occurredAt: d, content: `${dayJa(d)}の習慣（灯）\n${parts.join("\n")}` });
+    }
+    // 授業（時間割・出席）
+    const sc = src.school(), periods = arr(sc.periods);
+    const ATT: Record<string, string> = { present: "出席", late: "遅刻", absent: "欠席", cancel: "休講" };
+    for (const c of arr(sc.classes)) {
+      if (!c || !c.name) continue;
+      const att = Object.values(obj(c.att)) as string[], n = (k: string) => att.filter((x) => x === k).length;
+      const used = n("absent") + (+sc.lateRule ? Math.floor(n("late") / +sc.lateRule) : 0), left = +c.maxAbsent ? +c.maxAbsent - used : undefined;
+      add({ id: `class:${c.id}`, type: "class", title: `授業：${c.name}`,
+        content: `授業：${c.name}${c.room ? `（${c.room}）` : ""}${c.teacher ? ` ${c.teacher}` : ""}\n${arr(c.slots).map((sl: any) => `${WD_[sl.w]}曜${+sl.p + 1}限${periods[sl.p] ? `（${periods[sl.p][0]}〜${periods[sl.p][1]}）` : ""}`).join("・")}\n` +
+          `出席${n("present")}・遅刻${n("late")}・欠席${n("absent")}・休講${n("cancel")}${left !== undefined ? `（あと${left}回休める）` : ""}` });
+      for (const [k, v] of Object.entries(obj(c.att))) { const d = k.slice(0, 10); if (days.length && inR(d) && ATT[v as string]) add({ id: `att:${c.id}:${k}`, type: "class", title: `${c.name}の出席`, occurredAt: d, content: `${dayJa(d)} ${c.name}（${+k.split("#")[1]! + 1}限）：${ATT[v as string]}` }); }
+    }
+    // バイト先
+    for (const j of arr(more.jobs)) if (j && j.name) add({ id: `job:${j.id ?? j.name}`, type: "job", title: `バイト先：${j.name}`,
+      content: `バイト先：${j.name}${j.wage ? ` 時給${yen(j.wage)}` : ""}${j.transport ? ` 交通費${yen(j.transport)}` : ""}${j.night ? "・深夜割増あり" : ""}${j.closing ? `・締め日 ${j.closing}日` : ""}` });
+    // 家計簿（予算・固定費・貯金・記録）
+    const money = src.money(), mm = obj(more.money), catName = (id: string) => [...money.cats.out, ...money.cats.in].find((c) => c.id === id)?.name ?? "";
+    const accts = arr(mm.accts).filter((a) => a && a.name);
+    if (accts.length) add({ id: "money:accts", type: "money", title: "貯金（お金の置き場所）", content: `貯金（お金の置き場所ごとの残高）\n${accts.map((a) => `・${a.name}：${yen(a.bal)}${ymdOf(a.ts) ? `（${dayJa(ymdOf(a.ts)!)}時点）` : ""}`).join("\n")}\n合計：${yen(accts.reduce((t, a) => t + (+a.bal || 0), 0))}` });
+    const bud = obj(mm.budget), bc = Object.entries(obj(bud.cats)).filter(([, v]) => +(v as number) > 0);
+    if (+bud.total || bc.length || arr(bud.groups).length) add({ id: "money:budget", type: "money", title: "家計簿の予算",
+      content: `家計簿の予算（1か月）${+bud.total ? `\n全体：${yen(bud.total)}` : ""}${bc.map(([id, v]) => `\n${catName(id) || "カテゴリー"}：${yen(v)}`).join("")}${arr(bud.groups).map((g: any) => `\n${g.name}（${arr(g.cats).map(catName).filter(Boolean).join("＋")}）：${yen(g.amt)}`).join("")}` });
+    for (const [i, f] of arr(mm.fixed).entries()) if (f) add({ id: `money:fixed:${f.id ?? i}`, type: "money", title: `固定費：${f.name ?? f.memo ?? catName(f.cat)}`, content: `毎月の${f.k === "in" ? "定期収入" : "固定費"}：${f.name ?? f.memo ?? catName(f.cat)} ${yen(f.amt)}${f.day ? `（毎月${f.day}日）` : ""}` });
+    if (days.length) for (const [i, e] of money.entries.entries()) if (inR(e.date)) add({ id: `money:${i}`, type: "money", title: `${e.k === "in" ? "収入" : "支出"} ${catName(e.cat)}`, occurredAt: e.date, content: `${dayJa(e.date)} ${e.k === "in" ? "収入" : "支出"} ${catName(e.cat)} ${yen(e.amt)}${e.memo ? ` ${e.memo}` : ""}` });
+    // 場所（行った場所・名前をつけた場所）
+    if (spots.length) add({ id: "place:spots", type: "place", title: "名前をつけた場所", content: `名前をつけた場所：${spots.map((x) => x.name).join("、")}` });
+    if (days.length && spots.length) {
+      const pts = arr(more.places).filter((p) => p && +p.t > 0 && Number.isFinite(+p.lat));
+      for (const d of days) {
+        const seen = new Map<string, [number, number]>();
+        for (const p of pts) {
+          if (ymdOf(+p.t) !== d) continue;
+          const near = spots.map((x) => [x, distM({ lat: +p.lat, lng: +p.lng }, { lat: +x.lat, lng: +x.lng })] as const).sort((a, b) => a[1] - b[1])[0];
+          if (!near || near[1] > 200) continue;
+          const tt = new Date(+p.t), m = tt.getHours() * 60 + tt.getMinutes(), w = seen.get(near[0].name);
+          seen.set(near[0].name, w ? [Math.min(w[0], m), Math.max(w[1], m)] : [m, m]);
+        }
+        if (seen.size) add({ id: `place:${d}`, type: "place", title: `${dayJa(d)}に行った場所`, occurredAt: d, content: `${dayJa(d)}に行った場所：${[...seen].sort((a, b) => a[1][0] - b[1][0]).map(([n, [a, b]]) => `${n}（${hhmm(a)}${b > a ? `〜${hhmm(b)}` : ""}）`).join("、")}` });
+      }
+    }
+    // テンプレート・気持ち・タグ
+    for (const [i, t] of arr(more.templates).entries()) if (t && t.title) add({ id: `tpl:${t.id ?? i}`, type: "template", title: `テンプレート：${t.title}`, content: `予定のテンプレート：${t.title}${t.start ? ` ${hm(String(t.start))}〜${hm(String(t.end ?? ""))}` : ""}${t.memo ? `\nメモ：${t.memo}` : ""}` });
+    const cf = arr(more.customFeelings).map((x) => (typeof x === "string" ? x : x?.name)).filter(Boolean), ct = arr(more.customTags).map((x) => (typeof x === "string" ? x : x?.name)).filter(Boolean);
+    if (cf.length || ct.length) add({ id: "diary:custom", type: "diary", title: "自分で足した気持ち・タグ", content: `自分で足した気持ち：${cf.join("、") || "なし"}\n自分で足したタグ：${ct.join("、") || "なし"}` });
+  }
+  // a question about some days: things without a day (バイト先, 貯金, 授業のまとめ…) only when the question names them
+  const scoped = r ? out.filter((x) => (x.occurredAt ? inR(x.occurredAt.slice(0, 10)) : words.length > 0 && match(x, words))) : out;
+  const hit = scoped.filter((x) => match(x, words));
+  // no word matched: the newest of the main kinds rather than nothing (the day-by-day ones only when a range was asked)
+  const pool = hit.length || !words.length ? hit : scoped.filter((x) => ["diary", "event", "task", "memo"].includes(x.type));
+  return pool.sort((a, b) => (b.occurredAt ?? "").localeCompare(a.occurredAt ?? "")).slice(0, q.limit ?? 30);
 }
 
 // ---------------------------------------------------------------- engine
@@ -482,7 +613,8 @@ export function createHibiAI(src: HibiSource): PersonalAI {
     getSystemPrompt: () =>
       "あなたは手帳アプリ「ひび手帳」のアシスタント「まいにち」です。日本語で、やさしく簡潔に答えてください。" +
       "予定・日記・やることについては、渡された記録だけを根拠にし、記録にないことは「記録にはありません」と答えてください。" +
-      "予定の追加は、ツールを使って頼まれたときだけ行います。予定の変更や削除はできないので、ひび手帳で行うよう伝えてください。",
+      "予定の追加は、ツールを使って頼まれたときだけ行います。予定の変更や削除はできないので、ひび手帳で行うよう伝えてください。" +
+      (src.ready() && src.more().name ? `ユーザーの名前は「${src.more().name}」です。` : ""),
     async searchData(q) {
       return records(src, q, new Date());
     },
