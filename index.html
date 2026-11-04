@@ -177,20 +177,28 @@ svg{display:block}
 .rt-steps details ul{list-style:none;padding:0;margin:4px 0 0}
 .rt-steps details li{display:flex;gap:10px;font-size:12.5px;padding:2px 0}
 /* launch animation: the icon's sunrise plays on the blue, then the app shows (like ひび手帳's "h") */
-#splash{position:fixed;inset:0;z-index:200;display:grid;place-items:center;background:#4F8ED6;transition:opacity .45s ease,transform .5s cubic-bezier(.3,.8,.3,1)}
+/* launch animation 「夜明け」: the screen turns from night navy to the morning blue, the stars fade as the icon's sun rises */
+#splash{position:fixed;inset:0;z-index:200;display:grid;place-items:center;overflow:hidden;background:#4F8ED6;animation:spDawn 1.3s ease .15s both;transition:opacity .45s ease,transform .5s cubic-bezier(.3,.8,.3,1)}
+@keyframes spDawn{from{background-color:#141A3D}to{background-color:#4F8ED6}}
+/* everything waits on the night sky until the first frame is really on the screen (the app's script runs before the first paint) */
+#splash:not(.go),#splash:not(.go) *{animation-play-state:paused!important}
 #splash svg{width:min(60vw,270px);height:auto;overflow:visible}
 #splash.out{opacity:0;transform:scale(1.08);pointer-events:none}
+.sp-star{position:absolute;width:var(--s,3px);height:var(--s,3px);border-radius:50%;background:#FFF4EE;box-shadow:0 0 6px rgba(255,244,238,.8);opacity:0;animation:spTwinkle 1.25s ease forwards}
+@keyframes spTwinkle{0%{opacity:0}25%{opacity:.95}70%{opacity:.6}100%{opacity:0}}
 .sp-cr{stroke:#FFF4EE;stroke-width:20;stroke-linecap:round;fill:none}
-.sp-hz{transform-box:fill-box;transform-origin:center;transform:scaleX(0);animation:spGrow .5s cubic-bezier(.5,0,.2,1) .1s forwards}
-.sp-sun{fill:#FFF4EE;transform:translateY(130px);animation:spRise .7s cubic-bezier(.2,.8,.25,1) .3s forwards}
-.sp-ray{stroke-dasharray:1;stroke-dashoffset:1;animation:spDraw .28s ease-out forwards}
-.sp-low{opacity:.55;transform-box:fill-box;transform-origin:left;transform:scaleX(0);animation:spGrow .35s cubic-bezier(.5,0,.2,1) 1.08s forwards}
-.sp-dot{fill:#232A5C;transform-box:fill-box;transform-origin:center;transform:scale(0);animation:spDot .45s cubic-bezier(.3,1.7,.5,1) 1.3s forwards}
+.sp-hz{transform-box:fill-box;transform-origin:center;transform:scaleX(0);animation:spGrow .6s cubic-bezier(.5,0,.2,1) .2s forwards}
+.sp-sun{fill:#FFF4EE;transform:translateY(150px);animation:spRise 1s cubic-bezier(.25,.8,.25,1) .45s forwards}
+.sp-halo{opacity:0;animation:spHalo 1.4s ease .5s forwards}
+@keyframes spHalo{0%{opacity:0}50%{opacity:.9}100%{opacity:0}}
+.sp-ray{stroke-dasharray:1;stroke-dashoffset:1;animation:spDraw .3s ease-out forwards}
+.sp-low{opacity:.55;transform-box:fill-box;transform-origin:left;transform:scaleX(0);animation:spGrow .35s cubic-bezier(.5,0,.2,1) 1.35s forwards}
+.sp-dot{fill:#232A5C;transform-box:fill-box;transform-origin:center;transform:scale(0);animation:spDot .45s cubic-bezier(.3,1.7,.5,1) 1.55s forwards}
 @keyframes spGrow{to{transform:scaleX(1)}}
 @keyframes spRise{to{transform:none}}
 @keyframes spDraw{to{stroke-dashoffset:0}}
-@keyframes spDot{to{transform:scale(1)}}
-@media (prefers-reduced-motion:reduce){.sp-hz,.sp-sun,.sp-low,.sp-dot{animation:none;transform:none}.sp-ray{animation:none;stroke-dashoffset:0}#splash{transition:opacity .3s}#splash.out{transform:none}}
+@keyframes spDot{0%{transform:scale(0)}60%{transform:scale(1.25)}100%{transform:scale(1)}}
+@media (prefers-reduced-motion:reduce){#splash{animation:none}.sp-star,.sp-halo{display:none}.sp-hz,.sp-sun,.sp-low,.sp-dot{animation:none;transform:none}.sp-ray{animation:none;stroke-dashoffset:0}#splash{transition:opacity .3s}#splash.out{transform:none}}
 /* bottom bar (from communication) */
 #tabbar{position:fixed;left:0;right:0;bottom:0;z-index:8;display:flex;justify-content:center;padding:0 12px max(10px,env(safe-area-inset-bottom));pointer-events:none}
 /* two tabs only: the bar is two tabs wide (same as iti) */
@@ -262,10 +270,12 @@ svg{display:block}
 </style>
 </head>
 <body>
-<div id="splash" aria-hidden="true"><svg viewBox="80 110 352 320">
-  <defs><clipPath id="sp-c"><rect x="0" y="0" width="512" height="288"/></clipPath></defs>
+<div id="splash" aria-hidden="true"><i class="sp-star" style="left:12%;top:14%;--s:3px;animation-delay:0.05s"></i><i class="sp-star" style="left:26%;top:8%;--s:2px;animation-delay:0.10s"></i><i class="sp-star" style="left:41%;top:18%;--s:4px;animation-delay:0.15s"></i><i class="sp-star" style="left:58%;top:10%;--s:2px;animation-delay:0.20s"></i><i class="sp-star" style="left:73%;top:16%;--s:3px;animation-delay:0.25s"></i><i class="sp-star" style="left:88%;top:7%;--s:2px;animation-delay:0.30s"></i><i class="sp-star" style="left:18%;top:30%;--s:2px;animation-delay:0.35s"></i><i class="sp-star" style="left:34%;top:36%;--s:3px;animation-delay:0.40s"></i><i class="sp-star" style="left:64%;top:28%;--s:2px;animation-delay:0.45s"></i><i class="sp-star" style="left:82%;top:33%;--s:4px;animation-delay:0.50s"></i><i class="sp-star" style="left:50%;top:24%;--s:2px;animation-delay:0.55s"></i><i class="sp-star" style="left:8%;top:44%;--s:3px;animation-delay:0.60s"></i><i class="sp-star" style="left:93%;top:46%;--s:2px;animation-delay:0.65s"></i><i class="sp-star" style="left:28%;top:52%;--s:2px;animation-delay:0.70s"></i><i class="sp-star" style="left:71%;top:50%;--s:3px;animation-delay:0.75s"></i><svg viewBox="80 110 352 320">
+  <defs><clipPath id="sp-c"><rect x="0" y="0" width="512" height="288"/></clipPath>
+    <radialGradient id="sp-g"><stop offset="0" stop-color="#FFE3B8" stop-opacity=".55"/><stop offset=".55" stop-color="#FFE3B8" stop-opacity=".18"/><stop offset="1" stop-color="#FFE3B8" stop-opacity="0"/></radialGradient></defs>
+  <circle class="sp-halo" cx="256" cy="288" r="190" fill="url(#sp-g)"/>
   <g clip-path="url(#sp-c)"><circle class="sp-sun" cx="256" cy="288" r="112"/></g>
-  <g class="sp-cr"><line class="sp-ray" style="animation-delay:0.82s" pathLength="1" x1="256.0" y1="142.0" x2="256.0" y2="106.0"/><line class="sp-ray" style="animation-delay:0.9s" pathLength="1" x1="345.9" y1="173.0" x2="368.1" y2="144.6"/><line class="sp-ray" style="animation-delay:0.9s" pathLength="1" x1="166.1" y1="173.0" x2="143.9" y2="144.6"/><line class="sp-ray" style="animation-delay:0.98s" pathLength="1" x1="396.3" y1="247.8" x2="430.9" y2="237.8"/><line class="sp-ray" style="animation-delay:0.98s" pathLength="1" x1="115.7" y1="247.8" x2="81.1" y2="237.8"/></g>
+  <g class="sp-cr"><line class="sp-ray" style="animation-delay:1.10s" pathLength="1" x1="256.0" y1="142.0" x2="256.0" y2="106.0"/><line class="sp-ray" style="animation-delay:1.19s" pathLength="1" x1="345.9" y1="173.0" x2="368.1" y2="144.6"/><line class="sp-ray" style="animation-delay:1.19s" pathLength="1" x1="166.1" y1="173.0" x2="143.9" y2="144.6"/><line class="sp-ray" style="animation-delay:1.28s" pathLength="1" x1="396.3" y1="247.8" x2="430.9" y2="237.8"/><line class="sp-ray" style="animation-delay:1.28s" pathLength="1" x1="115.7" y1="247.8" x2="81.1" y2="237.8"/></g>
   <line class="sp-cr sp-hz" x1="96" y1="320" x2="416" y2="320"/>
   <line class="sp-cr sp-low" x1="176" y1="368" x2="336" y2="368"/>
   <circle class="sp-dot" cx="394" cy="368" r="22"/>
@@ -279,8 +289,16 @@ svg{display:block}
   var sa = navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches), gap = screen.height - window.innerHeight;
   if (sa && gap > 0 && gap < 120) el.style.paddingBottom = gap + 'px';
   // the strips above and below the page (status bar, home bar) show the page's own color: make them blue while it plays
-  document.documentElement.style.background = document.body.style.background = '#4F8ED6';
-  var mt = document.querySelector('meta[name="theme-color"]'); if (mt) mt.setAttribute('content', '#4F8ED6');
+  var night = !(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches), html = document.documentElement, body = document.body;
+  html.style.background = body.style.background = night ? '#141A3D' : '#4F8ED6';
+  var mt = document.querySelector('meta[name="theme-color"]'); if (mt) mt.setAttribute('content', night ? '#141A3D' : '#4F8ED6');
+  // start when the first frame is painted: two frames later, so the night sky is seen from its beginning
+  requestAnimationFrame(function () { requestAnimationFrame(function () {
+    el.classList.add('go'); window.__spAt = performance.now();
+    if (!night) return;
+    html.style.transition = body.style.transition = 'background-color 1.3s ease .15s'; html.style.background = body.style.background = '#4F8ED6';
+    setTimeout(function () { if (mt && document.getElementById('splash')) mt.setAttribute('content', '#4F8ED6'); }, 800);
+  }); });
 })();
 </script>
 <div id="app"></div>
@@ -864,7 +882,7 @@ function settingsHTML() {
     <div class="fld"><input id="set-base" type="url" value="${esc(gd.base || norikaeBase())}" autocapitalize="off" spellcheck="false" placeholder="${DEF_NORIKAE}"></div>
     <p class="note" style="margin:6px 4px 0">ひび手帳の 設定 → 乗換案内 と同じURLにしてください。</p>
     <p class="lbl">表示</p>
-    <label class="card tg"><span>起動時のアニメーション<small>開いたとき、アイコンの日の出を描きます（タップで飛ばせます）</small></span><input type="checkbox" id="set-splash" ${splashOn() ? 'checked' : ''}></label>
+    <label class="card tg"><span>起動時のアニメーション<small>開いたとき、夜明けのアニメーションを出します（タップで飛ばせます）</small></span><input type="checkbox" id="set-splash" ${splashOn() ? 'checked' : ''}></label>
     ${AIV.engine && AIV.model ? `<p class="lbl">AI</p><div class="card" style="padding:12px 14px"><p class="note" style="margin:0">AI（${esc(AIV.model.name)}）は端末の中だけで動きます。会話はこの端末に保存されます。</p><button class="btn ghost" data-act="aiDelete">ダウンロードしたAIを削除する</button></div>` : ''}
     <p class="note" style="margin:16px 4px 0">この画面は、ひび手帳が Google ドライブに保存したデータを読むだけです。予定の追加・変更・日記・月の表示はひび手帳で。</p>`;
 }
@@ -1110,10 +1128,16 @@ Object.assign(ACT, {
 /* ================= start ================= */
 function endSplash() {
   const el = $('#splash'); if (!el || el.classList.contains('out')) return; el.classList.add('out');
+  document.documentElement.style.transition = document.body.style.transition = '';
   document.documentElement.style.background = document.body.style.background = ''; applyTheme(); // back to the app's own color
   setTimeout(() => el.remove(), 520);
 }
-if ($('#splash')) { const quick = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches; setTimeout(endSplash, quick ? 700 : 1950); $('#splash').addEventListener('click', endSplash); }
+if ($('#splash')) {
+  // ends 1.95 s after it really started (see the splash's own script), whenever the app's script is done
+  const quick = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches, len = quick ? 700 : 1950;
+  const arm = () => window.__spAt ? setTimeout(endSplash, Math.max(0, len - (performance.now() - window.__spAt))) : requestAnimationFrame(arm);
+  arm(); $('#splash').addEventListener('click', endSplash);
+}
 gdFromHash(); applyTheme(); render(); paintTabs(false); if (tab === 'ai') aiOpen(); load();
 // keep the now line moving, and pick up a new day after midnight
 let lastDay = todayISO();
