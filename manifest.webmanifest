@@ -1,7 +1,7 @@
 {
-  "name": "きょう｜ひび手帳",
-  "short_name": "きょう",
-  "description": "ひび手帳のタイムラインの「今日」だけを表示します",
+  "name": "まいにち｜ひび手帳",
+  "short_name": "まいにち",
+  "description": "ひび手帳の今日の予定と、ひび手帳のことを話せるAI",
   "lang": "ja",
   "start_url": "./",
   "scope": "./",

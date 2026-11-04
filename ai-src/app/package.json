@@ -1,0 +1,13 @@
+{
+  "name": "@personal-ai-engine/mainichi",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": { "build": "vite build", "typecheck": "tsc -p tsconfig.json --noEmit" },
+  "dependencies": {
+    "@personal-ai-engine/core": "workspace:*",
+    "@personal-ai-engine/inference": "workspace:*",
+    "@personal-ai-engine/retrieval": "workspace:*"
+  },
+  "devDependencies": { "typescript": "5.9.3", "vite": "7.3.7" }
+}
