@@ -191,7 +191,8 @@ svg{display:block}
 @media (prefers-reduced-motion:reduce){.sp-hz,.sp-sun,.sp-low,.sp-dot{animation:none;transform:none}.sp-ray{animation:none;stroke-dashoffset:0}#splash{transition:opacity .3s}#splash.out{transform:none}}
 /* bottom bar (from communication) */
 #tabbar{position:fixed;left:0;right:0;bottom:0;z-index:8;display:flex;justify-content:center;padding:0 12px max(10px,env(safe-area-inset-bottom));pointer-events:none}
-#tabbar ul{pointer-events:auto;position:relative;display:flex;height:64px;width:min(28rem,calc(100vw - 1.5rem));margin:0;padding:4px;list-style:none;border-radius:32px;
+/* two tabs only: the bar is two tabs wide (same as iti) */
+#tabbar ul{pointer-events:auto;position:relative;display:flex;height:62px;width:200px;margin:0;padding:4px;list-style:none;border-radius:31px;
   background:color-mix(in srgb,var(--bg) 58%,transparent);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);transform:translateZ(0);
   box-shadow:0 8px 32px rgba(0,0,0,.14),inset 0 0 0 .5px var(--sep-strong),inset 0 1px 0 rgba(255,255,255,.35)}
 .tb-hl{position:absolute;top:4px;bottom:4px;left:4px;width:calc((100% - 8px) / 2);pointer-events:none;transition:transform 620ms cubic-bezier(.34,1.45,.5,1)}
@@ -227,7 +228,7 @@ svg{display:block}
 .msg .src{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;white-space:normal}
 .msg .src span{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--surface-2);color:var(--ink-2)}
 .msg .tool{display:block;font-size:11.5px;color:var(--ink-3);margin-bottom:4px}
-.composer{position:fixed;left:0;right:0;bottom:calc(max(10px,env(safe-area-inset-bottom)) + 72px);z-index:7;display:flex;justify-content:center;padding:0 12px;pointer-events:none}
+.composer{position:fixed;left:0;right:0;bottom:calc(max(10px,env(safe-area-inset-bottom)) + 70px);z-index:7;display:flex;justify-content:center;padding:0 12px;pointer-events:none}
 .composer form{pointer-events:auto;display:flex;align-items:flex-end;gap:8px;width:min(28rem,calc(100vw - 1.5rem));padding:6px 6px 6px 16px;border-radius:26px;
   background:color-mix(in srgb,var(--surface) 82%,transparent);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);box-shadow:0 6px 24px rgba(0,0,0,.12),inset 0 0 0 .5px var(--sep-strong)}
 .composer textarea{flex:1;min-width:0;border:0;background:none;resize:none;font:inherit;font-size:16px;line-height:1.45;color:var(--ink);padding:8px 0;max-height:120px;outline:none}
