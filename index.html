@@ -481,7 +481,6 @@ const pickMore = (s, o) => cleanAll({
   tasks: s.tasks, templates: s.templates, jobs: s.jobs, places: s.places, spots: s.spots, notes: s.notes, habits: s.habits,
   customFeelings: s.customFeelings, customTags: s.customTags,
   money: s.money ? { budget: s.money.budget, fixed: s.money.fixed, accts: s.money.accts, hist: s.money.hist } : {},
-  chronos: o && o.chronos && Array.isArray(o.chronos.events) ? o.chronos.events.filter(e => e && !e.isSample) : [],
   ...pickApps(o && o.apps),
 });
 const pick = (s, o) => ({
@@ -579,7 +578,7 @@ async function addToHibi(e) {
   if (!gd.rt) throw new Error('Googleにログインしていないため、ひび手帳に渡せません（「今日」の画面からログインしてください）');
   const item = { id: 'mn-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), kind: 'event', by: 'mainichi', createdAt: new Date().toISOString(),
     event: { title: e.title, date: e.date, allDay: !!e.allDay, ...(e.allDay ? {} : { start: e.start, end: e.end }), show: e.show === 'cal' || e.show === 'tl' ? e.show : 'both',
-      ...(e.countdown ? { countdown: true } : {}), ...(typeof e.chrOn === 'boolean' ? { chrOn: e.chrOn } : {}) } };
+      ...(e.countdown ? { countdown: true } : {}) } };
   const files = await ibRead(), items = [...files.flatMap(f => f.items), item];
   await gdWrite(IB_FILE, JSON.stringify({ app: 'hibi-inbox', version: 1, savedAt: new Date().toISOString(), by: 'mainichi', items }), files.length ? files[0].id : '');
   sent.push({ id: item.id, event: item.event, at: Date.now() }); lsSet(SENT_KEY, sent);
@@ -932,7 +931,6 @@ const ACT = {
 document.addEventListener('click', e => { const t = e.target.closest('[data-act]'); if (t && ACT[t.dataset.act]) ACT[t.dataset.act](t); });
 const splashOn = () => { try { return localStorage.getItem('kyou.splash') !== 'off'; } catch (e) { return true; } };
 document.addEventListener('change', e => {
-  if (e.target.id === 'cf-chr') { const m = AIV.msgs.find(x => x.confirm); if (m) m.confirm.chrTouched = true; return; }
   if (e.target.id === 'cf-allday') { const tm = $('.cf-tm'); if (tm) tm.hidden = e.target.checked; return; }
   if (e.target.id === 'set-splash') { try { if (e.target.checked) localStorage.removeItem('kyou.splash'); else localStorage.setItem('kyou.splash', 'off'); } catch (err) {} return; }
   if (e.target.id !== 'set-base') return;
@@ -950,7 +948,7 @@ function applyTheme() {
 
 /* ================= bottom bar（communication の下のバー） ================= */
 const TABS = [['today', '今日', 'today'], ['ai', 'AI', 'sparkle']];
-let tab = (() => { try { return localStorage.getItem('mainichi.tab') === 'ai' ? 'ai' : 'today'; } catch (e) { return 'today'; } })();
+let tab = (() => { if (/[?&]tab=ai\b/.test(location.search)) return 'ai'; try { return localStorage.getItem('mainichi.tab') === 'ai' ? 'ai' : 'today'; } catch (e) { return 'today'; } })();
 const scrollY0 = { today: 0, ai: 0 };
 function paintTabs(jelly) {
   const i = TABS.findIndex(t => t[0] === tab), hl = $('.tb-hl'), blob = hl.firstElementChild;
@@ -1097,7 +1095,6 @@ function confirmHTML(c) {
     <div class="seg" role="radiogroup">${[['both', '両方'], ['cal', 'カレンダー'], ['tl', 'タイムライン']].map(([k, l]) => `<button type="button" role="radio" data-act="cfShow" data-k="${k}" aria-checked="${(x.show || 'both') === k}">${l}</button>`).join('')}</div>
     <p class="cf-sub" id="cf-show">${SHOW_JA[x.show || 'both']}</p>
     <label class="cf-ad"><input type="checkbox" id="cf-cd" ${x.countdown ? 'checked' : ''}> カウントダウン（あと◯日）</label>
-    <label class="cf-ad"><input type="checkbox" id="cf-chr" ${(typeof x.chrOn === 'boolean' ? x.chrOn : x.show !== 'tl') ? 'checked' : ''}> 刻に出す</label>
     <div class="cf-btns"><button class="btn primary" data-act="aiYes">追加する</button><button class="btn ghost" data-act="aiNo">やめる</button></div>
     <p>ひび手帳を開くと、ひび手帳の予定に入ります。</p></div>`;
 }
@@ -1192,15 +1189,12 @@ Object.assign(ACT, {
     if (!title) { toast('名前を入れてください'); return; }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { toast('日付を選んでください'); return; }
     if (!allDay && (!/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end))) { toast('時刻を選んでください'); return; }
-    const args = m.confirm.args, show = args.show === 'cal' || args.show === 'tl' ? args.show : 'both', chr = !!($('#cf-chr') || {}).checked;
+    const args = m.confirm.args, show = args.show === 'cal' || args.show === 'tl' ? args.show : 'both';
     Object.assign(args, { title, date, allDay, show, countdown: !!($('#cf-cd') || {}).checked }); if (allDay) { delete args.start; delete args.end; } else Object.assign(args, { start, end });
-    if (chr === (show !== 'tl')) delete args.chrOn; else args.chrOn = chr; // kept only when it differs from ひび手帳's usual
     const r = m.confirm.resolve; m.confirm = null; m.wait = true; aiPaintMsgs(); r(true);
   },
-  // 表示する場所: 刻に出す follows ひび手帳's usual (on unless timeline-only) until it is changed by hand
   cfShow: t => {
     const m = AIV.msgs.find(x => x.confirm); if (!m) return; const a = m.confirm.args, k = t.dataset.k;
-    const chr = $('#cf-chr'); if (chr && !m.confirm.chrTouched) chr.checked = k !== 'tl';
     a.show = k; const sub = $('#cf-show'); if (sub) sub.textContent = SHOW_JA[k]; document.querySelectorAll('.seg [data-act=cfShow]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.k === k)));
   },
   rtAdd: async t => {

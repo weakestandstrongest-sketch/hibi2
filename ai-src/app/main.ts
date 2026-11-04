@@ -62,8 +62,6 @@ export interface NewEvent {
   show?: "both" | "cal" | "tl";
   /** カレンダーの上に「あと◯日」を出す */
   countdown?: boolean;
-  /** 刻に出す（省略：ひび手帳の決まりどおり。タイムラインだけの予定は出さない） */
-  chrOn?: boolean;
 }
 export interface MoneyEntry { k: "out" | "in"; amt: number; cat: string; memo: string; date: string }
 export interface MoneyData { cats: { out: Array<{ id: string; name: string }>; in: Array<{ id: string; name: string }> }; entries: MoneyEntry[] }
@@ -90,7 +88,7 @@ export interface HibiSource {
   routeContext(): { result: RouteResult; selected: number } | null;
   /** ひび手帳の家計簿（支出・収入の記録とカテゴリー） */
   money(): MoneyData;
-  /** ひび手帳のそのほか全部（あとで・テンプレート・バイト先・場所・メモ・習慣・予算・貯金・刻・Asterism・凪…）。形はひび手帳のまま */
+  /** ひび手帳のそのほか全部（あとで・テンプレート・バイト先・場所・メモ・習慣・予算・貯金・Asterism・凪…）。形はひび手帳のまま */
   more(): Record<string, any>;
   /** 大学（時間割・出席・学期） */
   school(): Record<string, any>;
@@ -337,7 +335,7 @@ export function parseAdd(question: string, ctx: ToolContext): NewEvent | undefin
   return { title, date, allDay: false, start: `${pad(Math.floor(s0 / 60))}:${pad(s0 % 60)}`, end: `${pad(Math.floor(e0 / 60))}:${pad(e0 % 60)}`, ...extra };
 }
 const eventLabel = (e: NewEvent) => {
-  const opts = [e.show === "cal" ? "カレンダーだけ" : e.show === "tl" ? "タイムラインだけ" : "", e.countdown ? "カウントダウン" : "", e.chrOn === true && e.show === "tl" ? "刻にも出す" : e.chrOn === false && e.show !== "tl" ? "刻には出さない" : ""].filter(Boolean);
+  const opts = [e.show === "cal" ? "カレンダーだけ" : e.show === "tl" ? "タイムラインだけ" : "", e.countdown ? "カウントダウン" : ""].filter(Boolean);
   return `${dayJa(e.date)} ${e.allDay ? "終日" : `${hm(e.start!)}〜${hm(e.end!)}`}${opts.length ? `（${opts.join("・")}）` : ""}`;
 };
 
@@ -357,7 +355,6 @@ function addTool(src: HibiSource): AITool<NewEvent & Record<string, unknown>, Ne
         end: { type: "string", description: "終了 HH:MM（終日なら省略）" },
         show: { type: "string", enum: ["both", "cal", "tl"], description: "表示する場所：both（両方）、cal（カレンダーだけ）、tl（タイムラインだけ）" },
         countdown: { type: "boolean", description: "カレンダーの上に「あと◯日」を出すなら true" },
-        chrOn: { type: "boolean", description: "刻に出すかどうか（任意）" },
       },
       required: ["title", "date"],
     },
@@ -374,7 +371,7 @@ function addTool(src: HibiSource): AITool<NewEvent & Record<string, unknown>, Ne
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("日付が正しくありません");
       const show = args.show === "cal" || args.show === "tl" ? args.show : "both";
       const e: NewEvent = { title: String(args.title ?? "").trim().slice(0, 60), date, allDay, ...(allDay ? {} : { start: String(args.start), end: String(args.end || args.start) }),
-        show, ...(args.countdown === true ? { countdown: true } : {}), ...(typeof args.chrOn === "boolean" ? { chrOn: args.chrOn } : {}) };
+        show, ...(args.countdown === true ? { countdown: true } : {}) };
       if (!e.title) throw new Error("予定の名前がありません");
       if (!allDay && !(/^([01]\d|2[0-3]):[0-5]\d$/.test(e.start!) && /^([01]\d|2[0-3]):[0-5]\d$/.test(e.end!))) throw new Error("時刻が正しくありません");
       return src.addEvent(e);
@@ -1035,14 +1032,6 @@ function records(src: HibiSource, q: MemoryQuery, now: Date): MemoryRecord[] {
       for (const e of src.events())
         add({ id: `ev:${e.id}`, type: "event", title: e.title, occurredAt: e.date,
           content: `${dayJa(e.date)}${e.allDay ? " 終日" : e.start ? ` ${hm(e.start)}〜${hm(e.end ?? "")}` : ""} ${e.title}${e.repeat && e.repeat !== "none" ? "（繰り返し）" : ""}${e.memo ? `\nメモ：${e.memo}` : ""}` });
-    }
-    // 刻（ひび手帳と同じものは、もう上にある）
-    const have = new Set(src.events().map((e) => `${e.date}|${e.title}`));
-    for (const c of arr(more.chronos)) {
-      const d = ymdOf(c.date); if (!d || !c.title || have.has(`${d}|${c.title}`) || (!days.length ? false : !inR(d))) continue;
-      const tm = (m: unknown) => (Number.isFinite(+(m as number)) ? hhmm(+(m as number)) : "");
-      add({ id: `chr:${c.id ?? d + c.title}`, type: "event", title: String(c.title), occurredAt: d,
-        content: `${dayJa(d)} ${c.allDay ? "終日" : `${tm(c.startMin)}〜${tm(c.endMin)}`} ${c.title}（刻）${c.notes ? `\nメモ：${c.notes}` : ""}${c.location ? `\n場所：${c.location}` : ""}` });
     }
   }
   // やること・課題・あとで
