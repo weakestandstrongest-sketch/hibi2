@@ -62,6 +62,8 @@ export interface NewEvent {
   /** 刻に出す（省略：ひび手帳の決まりどおり。タイムラインだけの予定は出さない） */
   chrOn?: boolean;
 }
+export interface MoneyEntry { k: "out" | "in"; amt: number; cat: string; memo: string; date: string }
+export interface MoneyData { cats: { out: Array<{ id: string; name: string }>; in: Array<{ id: string; name: string }> }; entries: MoneyEntry[] }
 /** What the page gives the AI: views over ひび手帳's data, and a way to ask ひび手帳 to add an event. */
 export interface HibiSource {
   ready(): boolean;
@@ -73,6 +75,8 @@ export interface HibiSource {
    * Returns the event as it was sent.
    */
   addEvent(e: NewEvent): Promise<NewEvent>;
+  /** ひび手帳の家計簿（支出・収入の記録とカテゴリー） */
+  money(): MoneyData;
   /** Every event's definition, for questions without a date (「最後にジムに行ったのは？」). */
   events(): Array<{ id: string; title: string; date: string; start?: string; end?: string; allDay?: boolean; repeat?: string; memo?: string }>;
 }
@@ -346,6 +350,88 @@ function addTool(src: HibiSource): AITool<NewEvent & Record<string, unknown>, Ne
   };
 }
 
+// ---------------------------------------------------------------- 家計簿 (exact sums, no model)
+const MONEY_Q = /円|いくら|幾ら|金額|使っ|つかっ|支出|出費|収入|家計簿|お金|稼い|もらった/;
+interface MoneyArgs { from?: string; to?: string; label: string; kind: "out" | "in"; cats: string[]; catNames: string[]; words: string[] }
+const lastDay = (y: number, m: number) => new Date(y, m, 0).getDate();
+/** 「4月から今日まで」「この4月から」「4月から9月まで」「先月」「今年」… → a range; none = every record */
+function moneyRange(q: string, t: string): { from?: string; to?: string; label: string } {
+  const ty = +t.slice(0, 4), tm = +t.slice(5, 7);
+  const ymOf = (m: number) => (m <= tm ? ty : ty - 1); // a month without a year: the latest one so far
+  const two = q.match(/(\d{1,2})月(?:(\d{1,2})日)?から(\d{1,2})月(?:(\d{1,2})日)?(まで)?/);
+  if (two) {
+    const y1 = ymOf(+two[1]!), m2 = +two[3]!, y2 = m2 >= +two[1]! ? y1 : y1 + 1;
+    const from = `${y1}-${pad(+two[1]!)}-${pad(two[2] ? +two[2] : 1)}`, to = `${y2}-${pad(m2)}-${pad(two[4] ? +two[4] : lastDay(y2, m2))}`;
+    return { from, to, label: `${dayJa(from)}〜${dayJa(to)}` };
+  }
+  const since = q.match(/(\d{1,2})月(?:(\d{1,2})日)?(から|以降)/);
+  if (since) { const from = `${ymOf(+since[1]!)}-${pad(+since[1]!)}-${pad(since[2] ? +since[2] : 1)}`; return { from, to: t, label: `${dayJa(from)}〜今日（${dayJa(t)}）` }; }
+  const intent = parseDateIntent(q, t);
+  if (intent) return { from: intent.from, to: intent.to > t ? t : intent.to, label: intent.label };
+  return { label: "これまで" };
+}
+function moneyRoute(src: HibiSource, question: string, ctx: ToolContext): MoneyArgs | undefined {
+  const q = question.normalize("NFKC"), m = src.money();
+  if (!m.entries.length) return undefined;
+  const kind: "out" | "in" = /収入|入金|稼い|もらった|給料|仕送り/.test(q) ? "in" : "out";
+  // categories named in the question: 「外食費」, or 「外食」 for 外食費
+  const named = m.cats[kind].filter((c) => q.includes(c.name) || (c.name.length >= 3 && /[費代]$/.test(c.name) && q.includes(c.name.slice(0, -1))));
+  // 「外食費」 also contains 「食費」: count a name only where it is not part of a longer one that was named
+  const cats = named.filter((c) => {
+    let rest = q; for (const d of named) if (d !== c && d.name.length > c.name.length && d.name.includes(c.name)) rest = rest.split(d.name).join(" ");
+    return rest.includes(c.name) || (c.name.length >= 3 && /[費代]$/.test(c.name) && rest.includes(c.name.slice(0, -1)));
+  });
+  // words of the question that are written in memos: 「なか卯」, or anything in 「」
+  const quoted = [...q.matchAll(/[「『"]([^」』"]{1,30})[」』"]/g)].map((x) => x[1]!.trim()).filter(Boolean);
+  const memoWords = new Set<string>();
+  for (const e of m.entries) for (const w of [e.memo.trim(), ...e.memo.split(/[\s、,・/／()（）]+/)]) if (w.length >= 2 && q.includes(w) && !cats.some((c) => c.name.includes(w))) memoWords.add(w);
+  const words = [...new Set([...quoted.filter((w) => !cats.some((c) => c.name === w)), ...memoWords])].filter((w, _i, all) => !all.some((o) => o !== w && o.includes(w))); // keep the longest
+  if (!MONEY_Q.test(q) && !cats.length && !words.length) return undefined;
+  if (!MONEY_Q.test(q) && !/何回|何件|いくつ|合計|どれくらい|どのくらい/.test(q)) return undefined;
+  const r = moneyRange(q, today(ctx));
+  return { ...(r.from ? { from: r.from } : {}), ...(r.to ? { to: r.to } : {}), label: r.label, kind, cats: cats.map((c) => c.id), catNames: cats.map((c) => c.name), words };
+}
+function moneyTool(src: HibiSource): AITool<MoneyArgs & Record<string, unknown>, { total: number; n: number; list: MoneyEntry[] }> {
+  return {
+    name: "hibi_money",
+    description: "ひび手帳の家計簿から、期間・カテゴリー・メモの言葉で絞って、支出（または収入）の合計と件数を出す",
+    access: "read",
+    whenToUse: [MONEY_Q, /外食|食費|何回/],
+    answersWithoutRecords: true,
+    parameters: {
+      type: "object",
+      properties: {
+        from: { type: "string", description: "YYYY-MM-DD（任意）" }, to: { type: "string", description: "YYYY-MM-DD（任意）" },
+        label: { type: "string", description: "期間の言い方" }, kind: { type: "string", enum: ["out", "in"], description: "out=支出, in=収入" },
+        cats: { type: "array", items: { type: "string" }, description: "カテゴリーの id" }, catNames: { type: "array", items: { type: "string" }, description: "カテゴリーの名前" },
+        words: { type: "array", items: { type: "string" }, description: "メモに含まれる言葉" },
+      },
+      required: ["kind"],
+    },
+    route(question, ctx) {
+      return moneyRoute(src, question, ctx) as (MoneyArgs & Record<string, unknown>) | undefined;
+    },
+    formatAnswer(result, args) {
+      if (!result.ok) return `家計簿を読めませんでした（${result.error}）。`;
+      const cats = args.catNames?.length ? args.catNames.join("・") : "", words = args.words?.length ? `メモに「${args.words.join("」「")}」とある` : "";
+      // 「2026年10月の食費の支出」「4月1日〜今日、外食費のうち、メモに「なか卯」とある支出」
+      const head = `${args.label}${cats || words ? "、" : "の"}${cats ? `${cats}${words ? "のうち、" : "の"}` : ""}${words}${args.kind === "in" ? "収入" : "支出"}`;
+      const { total, n, list } = result.value;
+      if (!n) return `${head}は、家計簿に見つかりませんでした。`;
+      const lines = list.slice(0, 8).map((e) => `・${+e.date.slice(5, 7)}/${+e.date.slice(8, 10)} ${e.memo || "（メモなし）"} ${e.amt.toLocaleString()}円`);
+      return `${head}は、${n}件・合計 ${total.toLocaleString()}円 でした。\n${lines.join("\n")}${n > 8 ? `\n…ほか${n - 8}件` : ""}`;
+    },
+    async execute(args) {
+      if (!src.ready()) throw new Error("ひび手帳のデータがまだ読み込まれていません");
+      const cats = new Set(args.cats ?? []), words = args.words ?? [];
+      const list = src.money().entries
+        .filter((e) => e.k === args.kind && (!args.from || e.date >= args.from) && (!args.to || e.date <= args.to) && (!cats.size || cats.has(e.cat)) && (!words.length || words.some((w) => e.memo.includes(w))))
+        .sort((a, b) => b.date.localeCompare(a.date));
+      return { total: list.reduce((t, e) => t + e.amt, 0), n: list.length, list };
+    },
+  };
+}
+
 // ---------------------------------------------------------------- records for everything else (RAG)
 function match(rec: MemoryRecord, words: string[]): boolean {
   if (!words.length) return true;
@@ -400,7 +486,7 @@ export function createHibiAI(src: HibiSource): PersonalAI {
     async searchData(q) {
       return records(src, q, new Date());
     },
-    getTools: () => [addTool(src), nextTool(src), freeTool(src), todoTool(src), scheduleTool(src)] as unknown as AITool[],
+    getTools: () => [addTool(src), moneyTool(src), nextTool(src), freeTool(src), todoTool(src), scheduleTool(src)] as unknown as AITool[],
   });
   return new PersonalAI({
     appId: APP_ID,

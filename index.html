@@ -233,6 +233,10 @@ svg{display:block}
 .cf b{display:block;font-size:15px;margin-bottom:8px}
 .cf label{display:block;font-size:12px;font-weight:700;color:var(--ink-2);margin-top:8px}
 .cf .inp{display:block;width:100%;margin-top:4px;padding:9px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--bg);font-size:16px;color:var(--ink)}
+/* iPhone gives date / time fields their own minimum width: without this they stick out of the card */
+.cf input[type="date"].inp,.cf input[type="time"].inp{-webkit-appearance:none;appearance:none;min-width:0;max-width:100%;min-height:44px;text-align:left}
+.cf input[type="date"]::-webkit-date-and-time-value,.cf input[type="time"]::-webkit-date-and-time-value{text-align:left;margin:0}
+.msg.asking .cf{min-width:0;overflow:hidden}
 .cf .cf-ad{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--ink)}
 .cf .cf-ad input{flex:none;width:20px;height:20px;accent-color:var(--accent)}
 .cf .cf-sub{margin:5px 2px 0;font-size:11.5px;color:var(--ink-3)}
@@ -413,9 +417,16 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); retu
 let gd = lsGet(GD_KEY) || {};
 const gdPut = o => { gd = { ...gd, ...o }; lsSet(GD_KEY, gd); };
 // what the timeline and the AI need (the diary's words only: no photos, no songs)
-const DATA_V = 2;
+const DATA_V = 3;
 let D = lsGet(DATA_KEY); // { S, at (when hibi.json was saved), got (when we read it), src, fid, v }
+const pickMoney = m => {
+  m = m && typeof m === 'object' ? m : {};
+  const cats = m.cats && typeof m.cats === 'object' ? m.cats : {}, cl = a => (Array.isArray(a) ? a : []).filter(c => c && c.id != null && typeof c.name === 'string').map(c => ({ id: String(c.id), name: c.name }));
+  return { cats: { out: cl(cats.out), in: cl(cats.in) },
+    entries: (Array.isArray(m.entries) ? m.entries : []).filter(e => e && /^\d{4}-\d{2}-\d{2}$/.test(e.date) && Number.isFinite(+e.amt)).map(e => ({ k: e.k === 'in' ? 'in' : 'out', amt: Math.abs(Math.round(+e.amt)), cat: String(e.cat ?? ''), memo: String(e.memo ?? ''), date: e.date })) };
+};
 const pick = s => ({
+  money: pickMoney(s.money),
   entries: (Array.isArray(s.entries) ? s.entries : []).filter(e => e && typeof e.date === 'string').map(e => ({ id: String(e.id || e.date), date: e.date, time: e.time || '', text: typeof e.text === 'string' ? e.text : '', feelings: Array.isArray(e.feelings) ? e.feelings : [], tags: Array.isArray(e.tags) ? e.tags : [] })),
   events: Array.isArray(s.events) ? s.events : [],
   todos: Array.isArray(s.todos) ? s.todos : [],
@@ -898,6 +909,7 @@ const hibiSource = {
     .map(([x, , c]) => ({ title: x.title, due: x.due || undefined, dueTime: x.dueTime || undefined, start: x.start || undefined, memo: x.memo || undefined, kind: x.classId ? 'assignment' : 'todo', className: c ? c.name : undefined })),
   entries: () => S.entries || [],
   addEvent: e => addToHibi(e),
+  money: () => S.money || { cats: { out: [], in: [] }, entries: [] },
   events: () => S.events.filter(e => e && e.date).map(e => ({ id: e.id, title: e.title, date: e.date, start: e.start, end: e.end, allDay: !!e.allDay, repeat: e.repeat, memo: e.memo })),
 };
 const AIV = { mod: null, engine: null, booting: null, err: '', status: { state: 'uninitialized' }, msgs: [], busy: false, model: null };
@@ -1003,7 +1015,7 @@ function aiOpen() {
   aiPaintCard(); aiPaintMsgs(true);
   aiBoot().then(() => { aiPaintCard(); aiPaintMsgs(true); }, () => aiPaintCard());
 }
-const TOOL_JA = { hibi_add_event: 'ひび手帳への追加', hibi_schedule: '予定を確認しました', hibi_next: '次の予定を確認しました', hibi_free_time: '空き時間を計算しました', hibi_todos: 'やることを確認しました' };
+const TOOL_JA = { hibi_add_event: 'ひび手帳への追加', hibi_money: '家計簿を計算しました', hibi_schedule: '予定を確認しました', hibi_next: '次の予定を確認しました', hibi_free_time: '空き時間を計算しました', hibi_todos: 'やることを確認しました' };
 async function aiAsk(q) {
   if (AIV.busy) return;
   AIV.busy = true;
