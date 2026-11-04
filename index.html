@@ -948,16 +948,19 @@ function applyTheme() {
 
 /* ================= bottom bar（communication の下のバー） ================= */
 const TABS = [['today', '今日', 'today'], ['ai', 'AI', 'sparkle']];
-let tab = (() => { if (/[?&]tab=ai\b/.test(location.search)) return 'ai'; try { return localStorage.getItem('mainichi.tab') === 'ai' ? 'ai' : 'today'; } catch (e) { return 'today'; } })();
+const EMBED = /[?&]embed=1\b/.test(location.search); // inside ひび手帳 (its 「まいにち」 button): only the AI, no 今日 screen and no bottom bar
+let tab = (() => { if (EMBED || /[?&]tab=ai\b/.test(location.search)) return 'ai'; try { return localStorage.getItem('mainichi.tab') === 'ai' ? 'ai' : 'today'; } catch (e) { return 'today'; } })();
 const scrollY0 = { today: 0, ai: 0 };
 function paintTabs(jelly) {
   const i = TABS.findIndex(t => t[0] === tab), hl = $('.tb-hl'), blob = hl.firstElementChild;
   hl.style.transform = `translateX(${i * 100}%)`;
   if (jelly) { blob.classList.remove('jelly'); void blob.offsetWidth; blob.classList.add('jelly'); }
   document.querySelectorAll('.tb').forEach((b, k) => { b.innerHTML = `${ico(TABS[k][2])}<span>${TABS[k][1]}</span>`; if (k === i) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
-  app.hidden = tab !== 'today'; $('#ai').hidden = tab !== 'ai';
+  app.hidden = EMBED || tab !== 'today'; $('#ai').hidden = tab !== 'ai';
+  $('#tabbar').hidden = EMBED;
 }
 function setTab(t) {
+  if (EMBED) return;
   if (t === tab) { scrollTo({ top: 0, behavior: 'smooth' }); return; }
   scrollY0[tab] = scrollY; tab = t; try { localStorage.setItem('mainichi.tab', t); } catch (e) {}
   paintTabs(true);
