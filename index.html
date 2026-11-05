@@ -84,8 +84,12 @@ svg{display:block}
 .row.it{padding:6px 0}
 .row.it .rail{align-items:center}
 .pill{position:relative;z-index:1;width:58px;border-radius:29px;background:var(--c);color:#fff;display:grid;place-items:center;overflow:hidden;
-  box-shadow:0 3px 10px color-mix(in srgb,var(--c) 35%,transparent)}
+  box-shadow:0 3px 10px color-mix(in srgb,var(--c) 35%,transparent);filter:saturate(1.2) brightness(1.1)}
 .pill .ico{position:relative;z-index:1;width:26px;height:26px;stroke-width:2}
+/* 同じ作り（ひび手帳のタイムラインと同じ）：始まっていない予定は灰色の丸にアイコンだけ色、始まった予定は色つき */
+.row.it.future .pill{background:#E6E0DA;color:var(--c);box-shadow:none;filter:none}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .row.it.future .pill{background:#3D3D3F}}
+:root[data-theme="dark"] .row.it.future .pill{background:#3D3D3F}
 /* now inside this item: the part still to come is paler */
 .pill .rest{position:absolute;left:0;right:0;bottom:0;background:rgba(255,255,255,.5)}
 .body{display:block;min-width:0;padding:4px 0}
@@ -810,7 +814,8 @@ function render() {
       + ((ev.items || []).length ? `<span class="tag">持ち物 ${packedOf(ev, o.date).length}/${ev.items.length}</span>` : '');
     const lines = r ? r.steps.filter(x => x.k === 'a' && !x.walk).map(x => x.line).filter(Boolean) : [];
     const meta = `${o.fromY ? '0:00' : hm(ev.start)} – ${(overnight(ev) && !o.fromY ? '翌' : '') + hm(ev.end)}・${ev.cls ? `${ev.p + 1}限${ev.memo ? '・' + esc(ev.memo) : ''}` : dur(len)}${lines.length ? '・' + esc(lines.join(' → ')) : ''}`;
-    tl += `<div class="row it${dn ? ' done' : ''}${ev.pending ? ' pending' : ''}" style="--c:${c}">
+    const future = o.date > T || (o.date === T && now < o.s); // not started yet
+    tl += `<div class="row it${dn ? ' done' : ''}${ev.pending ? ' pending' : ''}${future ? ' future' : ''}" data-s="${o.s}" data-e="${o.e}" style="--c:${c}">
       <div class="t num">${o.fromY ? '0:00' : hm(ev.start)}</div>
       <div class="rail"><button class="pill" style="height:${H}px" ${act} aria-label="${esc(ev.title)}">${inNow ? `<span class="rest" style="height:${((o.e - now) / len * 100).toFixed(1)}%"></span>` : ''}${ico(ev.icon)}</button></div>
       <button class="body" ${act}><span class="m num">${meta}</span><span class="tt">${esc(ev.title)}${tags}</span></button></div>`;
@@ -825,18 +830,31 @@ function render() {
     ${!gd.rt && D.src === 'drive' ? '<button class="btn primary" data-act="login">Googleでログイン</button>' : ''}`;
   requestAnimationFrame(drawLinks);
 }
-// ひび手帳の drawTlLinks と同じ：近い予定はグレーの線1本、離れている予定は色のグラデーションの点線でつなぐ
+// ひび手帳の drawTlLinks と同じ：点線は、今の時刻までが色づき、その先は灰色（時間が進むと色が伸びる）
+function tlFill(id, y1, y2, ca, cb, p, grey) {
+  const g = (o, c) => `<stop offset="${o.toFixed(3)}" stop-color="${esc(c)}"/>`;
+  const stops = p >= 1 ? g(0, ca) + g(1, cb) : p <= 0 ? g(0, grey) + g(1, grey) : g(0, ca) + g(p, cb) + g(Math.min(1, p + 0.002), grey) + g(1, grey);
+  return `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="0" y1="${y1.toFixed(1)}" x2="0" y2="${y2.toFixed(1)}">${stops}</linearGradient>`;
+}
 function drawLinks() {
   const tl = $('#app .tl'); if (!tl) return;
   const old = tl.querySelector('.tl-links'); if (old) old.remove();
-  const items = [...tl.querySelectorAll('.row.it')], base = tl.getBoundingClientRect(); let defs = '', lines = '';
+  const items = [...tl.querySelectorAll('.row.it')], base = tl.getBoundingClientRect(), grey = getComputedStyle(document.documentElement).getPropertyValue('--ink-3').trim() || '#8E8E93';
+  const nowM = (() => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); })();
+  let defs = '', lines = '';
   for (let i = 0; i < items.length - 1; i++) {
     const pa = $('.pill', items[i]), pb = $('.pill', items[i + 1]), a = pa.getBoundingClientRect(), b = pb.getBoundingClientRect();
     const x = (a.left + a.width / 2 - base.left).toFixed(1), gap = b.top - a.bottom; if (gap <= 1) continue;
-    if (gap < 40) { lines += `<line class="tl-near" x1="${x}" x2="${x}" y1="${(a.bottom - base.top - 2).toFixed(1)}" y2="${(b.top - base.top + 2).toFixed(1)}" stroke-width="5" stroke-linecap="round"/>`; continue; }
+    const ca = getComputedStyle(items[i]).getPropertyValue('--c').trim() || grey, cb = getComputedStyle(items[i + 1]).getPropertyValue('--c').trim() || ca;
+    const sA = +items[i].dataset.e, sB = +items[i + 1].dataset.s, p = nowM >= sB ? 1 : nowM <= sA ? 0 : sB > sA ? (nowM - sA) / (sB - sA) : 0;
+    if (gap < 40) {
+      const y1 = a.bottom - base.top - 2, y2 = b.top - base.top + 2;
+      defs += tlFill(`tlg${i}`, y1, y2, ca, cb, p, grey);
+      lines += `<line x1="${x}" x2="${x}" y1="${y1.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="url(#tlg${i})" stroke-width="5" stroke-linecap="round"/>`;
+      continue;
+    }
     const y1 = a.bottom - base.top + 5, y2 = b.top - base.top - 5;
-    const ca = getComputedStyle(items[i]).getPropertyValue('--c').trim() || 'var(--line)', cb = getComputedStyle(items[i + 1]).getPropertyValue('--c').trim() || ca;
-    defs += `<linearGradient id="tlg${i}" gradientUnits="userSpaceOnUse" x1="0" y1="${y1.toFixed(1)}" x2="0" y2="${y2.toFixed(1)}"><stop offset="0" stop-color="${esc(ca)}"/><stop offset="1" stop-color="${esc(cb)}"/></linearGradient>`;
+    defs += tlFill(`tlg${i}`, y1, y2, ca, cb, p, grey);
     lines += `<line x1="${x}" x2="${x}" y1="${y1.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="url(#tlg${i})" stroke-width="3" stroke-linecap="round" stroke-dasharray="3.5 6.5"/>`;
   }
   if (lines) tl.insertAdjacentHTML('afterbegin', `<svg class="tl-links" aria-hidden="true"><defs>${defs}</defs>${lines}</svg>`);
