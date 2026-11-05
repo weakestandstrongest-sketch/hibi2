@@ -83,8 +83,8 @@ svg{display:block}
 .tl-links .tl-near{stroke:color-mix(in srgb,var(--ink-3) 55%,var(--surface))}
 .row.it{padding:6px 0}
 .row.it .rail{align-items:center}
-.pill{position:relative;z-index:1;width:58px;border-radius:29px;background:var(--c);color:#fff;display:grid;place-items:center;overflow:hidden;
-  box-shadow:0 3px 10px color-mix(in srgb,var(--c) 35%,transparent);filter:saturate(1.2) brightness(1.1)}
+.pill{position:relative;z-index:1;width:58px;border-radius:29px;background:color-mix(in srgb,var(--c) 84%,#fff);color:#fff;display:grid;place-items:center;overflow:hidden;
+  box-shadow:0 3px 10px color-mix(in srgb,var(--c) 35%,transparent)}
 .pill .ico{position:relative;z-index:1;width:26px;height:26px;stroke-width:2}
 /* 同じ作り（ひび手帳のタイムラインと同じ）：始まっていない予定は灰色の丸にアイコンだけ色、始まった予定は色つき */
 .row.it.future .pill{background:#E6E0DA;color:var(--c);box-shadow:none;filter:none}
@@ -830,6 +830,8 @@ function render() {
     ${!gd.rt && D.src === 'drive' ? '<button class="btn primary" data-act="login">Googleでログイン</button>' : ''}`;
   requestAnimationFrame(drawLinks);
 }
+// the same lighter colours as the pills (16% white mixed in), so the line matches them
+const liftHex = c => { const m = /^#([0-9a-f]{6})$/i.exec(c); if (!m) return c; const n = parseInt(m[1], 16); return '#' + [n >> 16, (n >> 8) & 255, n & 255].map(v => Math.round(v * 0.84 + 40.8).toString(16).padStart(2, '0')).join(''); };
 // ひび手帳の drawTlLinks と同じ：点線は、今の時刻までが色づき、その先は灰色（時間が進むと色が伸びる）
 function tlFill(id, y1, y2, ca, cb, p, grey) {
   const g = (o, c) => `<stop offset="${o.toFixed(3)}" stop-color="${esc(c)}"/>`;
@@ -845,7 +847,7 @@ function drawLinks() {
   for (let i = 0; i < items.length - 1; i++) {
     const pa = $('.pill', items[i]), pb = $('.pill', items[i + 1]), a = pa.getBoundingClientRect(), b = pb.getBoundingClientRect();
     const x = (a.left + a.width / 2 - base.left).toFixed(1), gap = b.top - a.bottom; if (gap <= 1) continue;
-    const ca = getComputedStyle(items[i]).getPropertyValue('--c').trim() || grey, cb = getComputedStyle(items[i + 1]).getPropertyValue('--c').trim() || ca;
+    const ca = liftHex(getComputedStyle(items[i]).getPropertyValue('--c').trim()) || grey, cb = liftHex(getComputedStyle(items[i + 1]).getPropertyValue('--c').trim()) || ca;
     const sA = +items[i].dataset.e, sB = +items[i + 1].dataset.s, p = nowM >= sB ? 1 : nowM <= sA ? 0 : sB > sA ? (nowM - sA) / (sB - sA) : 0;
     if (gap < 40) {
       const y1 = a.bottom - base.top - 2, y2 = b.top - base.top + 2;
