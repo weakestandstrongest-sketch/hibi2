@@ -681,7 +681,7 @@ async function load(manual) {
     if (!meta) { err = 'ドライブにひび手帳のデータがまだありません。ひび手帳の設定で「Googleドライブに自動保存」をオンにしてください'; return; }
     // when the newest file has not changed since last time, skip the download
     const at = Date.parse(meta.modifiedTime) || Date.now();
-    if (!manual && D && D.src === 'drive' && D.at === at && D.fid === meta.id && D.v === DATA_V) { D.got = Date.now(); lsSet(DATA_KEY, D); await ibCheck(); return; }
+    if (!manual && D && D.src === 'drive' && D.at === at && D.fid === meta.id && D.v === DATA_V) { D.got = Date.now(); if (!lsSet(DATA_KEY, D)) dataIdbPut(D); await ibCheck(); return; }
     const o = JSON.parse(await vkOpen(await (await gdFetch(`${GD_API}/${meta.id}?alt=media`)).text()));
     const s = o && o.data ? o.data : o;
     if (!s || !Array.isArray(s.events)) throw new Error('shape');
@@ -697,8 +697,14 @@ async function load(manual) {
     if (manual) toast(err);
   } finally { busy = false; applyTheme(); render(); }
 }
+// the last data read is also kept in IndexedDB: localStorage (about 5MB, shared with ひび手帳 and 凪) is often too small for it,
+// and without a copy, a slow or lost connection (outside, on the train) left the AI with nothing to answer from
+function dataDB() { return new Promise((ok, ng) => { const r = indexedDB.open('kyou-data', 1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => ok(r.result); r.onerror = () => ng(r.error); }); }
+async function dataIdbPut(v) { try { const db = await dataDB(); await new Promise(r => { const tx = db.transaction('kv', 'readwrite'); tx.objectStore('kv').put(v, 'D'); tx.oncomplete = tx.onerror = tx.onabort = r; }); db.close(); } catch (e) {} }
+async function dataIdbGet() { try { const db = await dataDB(), v = await new Promise(r => { const q = db.transaction('kv').objectStore('kv').get('D'); q.onsuccess = () => r(q.result); q.onerror = () => r(null); }); db.close(); return v && v.S && v.v === DATA_V ? v : null; } catch (e) { return null; } }
 function setData(s, at, src, fid, o) {
   S = pick(s, o); D = { S, at, got: Date.now(), src, fid, v: DATA_V };
+  dataIdbPut(D);
   if (!lsSet(DATA_KEY, D)) { try { localStorage.removeItem(DATA_KEY); } catch (e) {} }
   applyTheme();
 }
@@ -987,7 +993,7 @@ const ACT = {
   settings: () => openSheet(settingsHTML()),
   logout: () => {
     // only this screen forgets the login (ひび手帳 keeps its own, so nothing is revoked)
-    gd = { base: gd.base, noBorrow: true }; lsSet(GD_KEY, gd); try { localStorage.removeItem(DATA_KEY); } catch (e) {}
+    gd = { base: gd.base, noBorrow: true }; lsSet(GD_KEY, gd); try { localStorage.removeItem(DATA_KEY); indexedDB.deleteDatabase('kyou-data'); } catch (e) {}
     S = null; D = null; err = ''; closeSheet(); render(); toast('ログアウトしました');
   },
 };
@@ -1294,7 +1300,9 @@ if ($('#splash')) {
   const arm = () => window.__spAt ? setTimeout(endSplash, Math.max(0, len - (performance.now() - window.__spAt))) : requestAnimationFrame(arm);
   arm(); $('#splash').addEventListener('click', endSplash);
 }
-gdFromHash(); applyTheme(); render(); paintTabs(false); if (tab === 'ai') aiOpen(); load();
+gdFromHash(); applyTheme(); render(); paintTabs(false); if (tab === 'ai') aiOpen();
+// no copy in localStorage (too big): bring back the one in IndexedDB first, then look for a newer one
+(D ? Promise.resolve() : dataIdbGet().then(x => { if (x && !D) { D = x; S = x.S; applyTheme(); render(); } })).finally(() => load());
 // keep the now line moving, and pick up a new day after midnight
 let lastDay = todayISO();
 setInterval(() => { if (document.visibilityState === 'visible' && !sheet && tab === 'today') render(); if (todayISO() !== lastDay) { lastDay = todayISO(); load(); } }, 30000);
