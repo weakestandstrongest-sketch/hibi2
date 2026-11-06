@@ -1102,12 +1102,16 @@ async function aiBoot() {
       const e = AIV.mod.createHibiAI(hibiSource);
       e.on('inference', st => { AIV.status = st; aiPaintCard(); });
       await e.initialize();
+      // the automatic memory guess (about 1.5GB) is low for this iPhone: allow 2GB
+      try { e.setMemoryBudget(2 * 1024 ** 3); } catch (err) {}
       AIV.engine = e; AIV.model = e.models.get(AIV.mod.RECOMMENDED_MODEL.id);
       // for checking what the AI can find: only with ?debug in the address
       if (/[?&]debug\b/.test(location.search)) window.__mainichiSearch = q => e.config.adapter.searchData(q);
       // back to the last conversation
       let id = ''; try { id = localStorage.getItem(CONV_KEY) || ''; } catch (err) {}
       if (id) { try { AIV.msgs = (await e.chat.open(id)).filter(m => m.role === 'user' || m.role === 'assistant').map(m => ({ who: m.role === 'user' ? 'me' : 'ai', text: m.role === 'user' ? String(m.content).split(AIV.mod.FOLLOW)[0] : m.content })); } catch (err) { try { localStorage.removeItem(CONV_KEY); } catch (er) {} } }
+      // WebGPU is there but the GPU is not (iOS took it away): only opening the page again brings it back
+      if (e.capabilities && e.capabilities.webgpu.apiPresent && !e.capabilities.webgpu.adapterAvailable && aiReload(AIV.asking || '')) return e;
       // already downloaded: get it ready right away
       // (the memory guess is only a guess: it runs fine on this iPhone, so it is not asked about)
       if (AIV.model && await e.models.isCached(AIV.model.id).catch(() => false)) { const c = aiCheck(); if (c.ok || c.force) aiLoad(!c.ok); }
@@ -1120,7 +1124,7 @@ async function aiBoot() {
 function aiCheck() {
   const e = AIV.engine, caps = e && e.capabilities;
   if (!e || !AIV.model) return { ok: false, why: 'AIを起動しています…' };
-  if (caps && !caps.webgpu.adapterAvailable) return { ok: false, why: 'この端末・ブラウザでは WebGPU が使えないため、AIを動かせません（iPhone は iOS 26 以降の Safari でお使いください）。予定・やること・空き時間の質問には答えられます。' };
+  if (caps && !caps.webgpu.adapterAvailable) return { ok: false, why: caps.webgpu.apiPresent ? 'いまGPUを使えない状態です。まいにちを一度閉じて、開き直してください。予定・やること・空き時間の質問には答えられます。' : 'この端末・ブラウザでは WebGPU が使えないため、AIを動かせません（iPhone は iOS 26 以降の Safari でお使いください）。予定・やること・空き時間の質問には答えられます。' };
   const rep = e.models.checkCompatibility(AIV.model, AIV.mod.RECOMMENDED_MODEL.contextLength), bad = rep.issues.filter(i => i.severity === 'error');
   if (!bad.length) return { ok: true };
   const force = bad.every(i => i.code === 'MEMORY_INSUFFICIENT' || i.code === 'STORAGE_INSUFFICIENT');
@@ -1131,12 +1135,21 @@ function aiCheck() {
 // Then the whole AI is started again from scratch (the model is already on the iPhone, so this takes a few seconds).
 const AI_DEAD = /disposed|already deleted|device (was |is )?lost|devicelost|GPUDevice|instance.*deleted/i;
 const aiDead = err => AI_DEAD.test(String((err && err.message) || err));
-async function aiReset() {
+async function aiReset(q) {
   const e = AIV.engine, keep = AIV.msgs; AIV.resetAt = Date.now(); AIV.engine = null; AIV.booting = null; AIV.loading = null; AIV.status = { state: 'uninitialized' }; aiPaintCard();
   try { if (e) await e.dispose(); } catch (err) {}
   await aiBoot();
   AIV.msgs = keep; // (starting again reads the saved conversation: keep the one on the screen, with the question being asked)
+  const caps = AIV.engine && AIV.engine.capabilities;
+  if (caps && !caps.webgpu.adapterAvailable && aiReload(q)) await new Promise(() => {}); // (the page is opening again)
   await aiLoad(true, true);
+}
+// iOS sometimes keeps the GPU away from the page until it is opened again: open it again (once a minute at most), then ask the question again
+function aiReload(q) {
+  let last = 0; try { last = +sessionStorage.getItem('mainichi.reload') || 0; } catch (e) {}
+  if (Date.now() - last < 60000) return false;
+  try { sessionStorage.setItem('mainichi.reload', String(Date.now())); if (q) sessionStorage.setItem('mainichi.again', q); } catch (e) {}
+  location.reload(); return true;
 }
 function aiLoad(force, again) {
   if (AIV.loading) return AIV.loading;
@@ -1228,7 +1241,12 @@ function aiOpen() {
     $('#ai-form').addEventListener('submit', e => { e.preventDefault(); if (AIV.busy) { if (AIV.engine) AIV.engine.stop(); return; } const v = q.value.trim(); if (!v) return; q.value = ''; q.style.height = 'auto'; aiAsk(v); });
   }
   aiPaintCard(); aiPaintMsgs(true);
-  aiBoot().then(() => { aiPaintCard(); aiPaintMsgs(true); }, () => aiPaintCard());
+  aiBoot().then(async () => {
+    aiPaintCard(); aiPaintMsgs(true);
+    // opened again because the GPU was gone: ask the question that could not be answered
+    let q = ''; try { q = sessionStorage.getItem('mainichi.again') || ''; sessionStorage.removeItem('mainichi.again'); } catch (e) {}
+    if (q) { if (AIV.loading) await AIV.loading; aiAsk(q); }
+  }, () => aiPaintCard());
 }
 const TOOL_JA = { hibi_news: '凪から取ってきました', hibi_baseball: '野球速報から取ってきました', hibi_weather: '天気を調べました', hibi_route: 'のりかえで調べました', hibi_route_change: 'のりかえで経路を変えました', hibi_add_event: 'ひび手帳への追加', hibi_money: '家計簿を計算しました', hibi_habits: '習慣の記録を数えました', hibi_attendance: '出席を数えました', hibi_schedule: '予定を確認しました', hibi_next: '次の予定を確認しました', hibi_free_time: '空き時間を計算しました', hibi_todos: 'やることを確認しました' };
 async function aiAsk(q) {
@@ -1238,7 +1256,7 @@ async function aiAsk(q) {
   AIV.msgs.push(me, a); aiPaintMsgs(true);
   for (let round = 0; round < 2; round++) {
   try {
-    if (round) { a.text = ''; a.wait = true; a.err = false; a.tool = 'AIを立ち上げ直しています…'; aiPaintMsgs(true); await aiReset(); a.tool = ''; }
+    if (round) { a.text = ''; a.wait = true; a.err = false; a.tool = 'AIを立ち上げ直しています…'; aiPaintMsgs(true); AIV.asking = q; await aiReset(q); AIV.asking = ''; a.tool = ''; }
     else if (AIV.loading) await AIV.loading; // still getting ready (just opened): wait for it instead of failing
     const e = await aiBoot();
     if (!S) throw Object.assign(new Error(), { code: 'NO_DATA' });
