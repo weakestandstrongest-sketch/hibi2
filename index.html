@@ -1097,6 +1097,11 @@ const AIV = { mod: null, engine: null, booting: null, err: '', status: { state: 
 const CONV_KEY = 'mainichi.conv';
 // what is left of a follow-up once the words of a period and of small talk are taken out: nothing (or a letter) for a real follow-up
 const FOLLOW_WORDS = /今日|きょう|明日|あした|昨日|きのう|明後日|あさって|一昨日|おととい|今週|来週|先週|再来週|今月|来月|先月|今年|来年|去年|昨年|[0-9０-９]+|[一二三四五六七八九十]+|年|月|日|週|曜日?|[月火水木金土]曜|半|時|分|から|まで|の|は|で|が|に|と|も|って|なら|だと|だったら|では|じゃあ|じゃ|あ|え|ね|よ|か|かな|？|\?|！|!|、|。|,|\.|\s/g;
+// greetings and a word about how one feels (「こんにちは」「つかれた」「いえーい」): talked about as they are, without ひび手帳's records.
+// Handing a small model unrelated plans made it answer 「記録にはありません」 or mix them in.
+const SMALL_TALK = /^(こんにちは|こんばんは|おはよう|おやすみ|ありがと|どうも|よろしく|はじめまして|やあ|ハロー|hello|hi|hey|おつかれ|お疲れ|おつ|つかれ|疲れ|ねむ|眠|だる|しんど|いえ[ーい]|イエ[ーイ]|やった|わーい|うれし|嬉し|たのし|楽し|かなし|悲し|さみし|寂し|ひま|暇|げんき|元気|すご|えらい|がんば|頑張|ただいま|いってき|行ってき|おなか|お腹|はら(へ|減)|腹減|笑|草|w+$|ｗ+$|ok|おけ|了解|りょ|なるほど|そうなんだ|うん|はい|いいね|最高|さいこう)/i;
+const RECORD_WORDS = /予定|日記|やること|課題|締め?切|お金|円|家計|支出|収入|いつ|何回|何時|どこ|天気|ニュース|野球|試合|経路|電車|のりかえ|乗換|習慣|灯|出席|授業|メモ|場所|写真|追加|教えて|ふりかえ|振り返|先週|来週|明日|昨日|今週|今月|先月|[0-9０-９]/;
+const isSmallTalk = q => { const t = String(q).replace(/[\s　！!。、,.?？〜~…ー♪☆★♡❤️😊😆🎉]+$/u, '').trim(); return t.length <= 20 && !RECORD_WORDS.test(t) && SMALL_TALK.test(t.replace(/^(今日|きょう|今|いま|もう|めっちゃ|超|すごく|とても|ほんと|本当)(は|に|も)?/, '')); };
 const isFollowUp = q => q.length <= 30 && /[0-9０-９]|今日|きょう|明日|あした|昨日|きのう|明後日|あさって|一昨日|おととい|週|月|年|曜/.test(q) && q.replace(FOLLOW_WORDS, '').length <= 1 && !/日記|メモ|記事|ニュース|天気|場所|曲|気持ち|予定を|追加|入れて/.test(q);
 const SUGG = ['今日の予定は？', '次の予定は？', '明日の予定は？', '今日の空き時間は？', 'やることは？', '明日15時から17時までバイトを追加して', '名古屋から岐阜までの経路を調べて', '今日のニュースは？', '今日の天気は？', '先週の日記をふりかえって'];
 // the AI model chosen in 設定 → AIのモデル (the first of the list when nothing is chosen)
@@ -1247,12 +1252,14 @@ async function aiAsk(q) {
     // ひび手帳's exact tools answered (its own period first), instead of letting the small model guess the numbers
     // (not when the follow-up brings its own subject: 「昨日の日記は？」 is a new question, not a follow-up)
     let ask = q;
-    if (e.hibiRoutes(q)) AIV.base = q;
+    const chat = isSmallTalk(q);
+    if (chat) { /* a greeting: no records, no follow-up */ }
+    else if (e.hibiRoutes(q)) AIV.base = q;
     // and only when it is about nothing but a period: 「あ、4月から10月ね」「じゃあ先月は？」「6月だと？」「明日は？」
     // (「今日のニュースは？」「ありがとう」are new questions, not follow-ups)
     else if (AIV.base && isFollowUp(q)) { const c = q + AIV.mod.FOLLOW + AIV.base; if (e.hibiRoutes(c)) ask = c; }
     // always look through ひび手帳's records (the engine's own guess of 'is this about my records?' misses 習慣・家計簿・場所…)
-    for await (const ev of e.streamEvents(ask, { useMemory: true, confirmTool: call => aiConfirm(a, call) })) {
+    for await (const ev of e.streamEvents(ask, { useMemory: !chat, confirmTool: call => aiConfirm(a, call) })) {
       if (ev.type === 'tool_call') a.tool = TOOL_JA[ev.call.name] || 'ひび手帳を調べました';
       else if (ev.type === 'sources') a.src = ev.citations.slice(0, 6).map(c => `${md(c.date)} ${c.type === 'diary' ? '日記' : c.type === 'event' ? '予定' : c.type === 'task' ? 'やること' : 'メモ'}`);
       else if (ev.type === 'answer') { a.wait = false; a.text += ev.text; }
