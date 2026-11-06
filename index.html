@@ -1100,7 +1100,7 @@ const FOLLOW_WORDS = /今日|きょう|明日|あした|昨日|きのう|明後�
 const isFollowUp = q => q.length <= 30 && /[0-9０-９]|今日|きょう|明日|あした|昨日|きのう|明後日|あさって|一昨日|おととい|週|月|年|曜/.test(q) && q.replace(FOLLOW_WORDS, '').length <= 1 && !/日記|メモ|記事|ニュース|天気|場所|曲|気持ち|予定を|追加|入れて/.test(q);
 const SUGG = ['今日の予定は？', '次の予定は？', '明日の予定は？', '今日の空き時間は？', 'やることは？', '明日15時から17時までバイトを追加して', '名古屋から岐阜までの経路を調べて', '今日のニュースは？', '今日の天気は？', '先週の日記をふりかえって'];
 // the AI model chosen in 設定 → AIのモデル (the first of the list when nothing is chosen)
-const MODEL_KEY = 'mainichi.model';
+const MODEL_KEY = 'mainichi.model', LOADING_KEY = 'mainichi.loading';
 function aiPick() {
   const list = (AIV.mod && AIV.mod.MODELS) || [], id = lsGet(MODEL_KEY);
   return list.find(m => m.id === id) || list[0] || (AIV.mod && AIV.mod.RECOMMENDED_MODEL) || { contextLength: 2048, size: '約1GB' };
@@ -1113,6 +1113,15 @@ async function aiBoot() {
       const e = AIV.mod.createHibiAI(hibiSource);
       e.on('inference', st => { AIV.status = st; aiPaintCard(); });
       await e.initialize();
+      // the app went down while a model was loading (iOS closes it when memory runs out): go back to the first model and do not load by itself
+      const died = lsGet(LOADING_KEY);
+      if (died) {
+        try { localStorage.removeItem(LOADING_KEY); } catch (x) {}
+        const first = (AIV.mod.MODELS || [])[0], was = (AIV.mod.MODELS || []).find(m => m.id === died.id);
+        if (first && died.id !== first.id) { lsSet(MODEL_KEY, first.id); AIV.notice = `${was ? was.label : 'AI'} の準備中にまいにちが止まってしまったので、${first.label} に戻しました。`; }
+        else AIV.notice = 'AIの準備中にまいにちが止まってしまいました。メモリが足りないかもしれません。ほかのアプリを閉じてから「AIを準備する」を押してください。';
+        AIV.noAuto = true;
+      }
       AIV.engine = e; AIV.model = e.models.get(aiPick().id) || e.models.get(AIV.mod.RECOMMENDED_MODEL.id);
       // for checking what the AI can find: only with ?debug in the address
       if (/[?&]debug\b/.test(location.search)) window.__mainichiSearch = q => e.config.adapter.searchData(q);
@@ -1120,7 +1129,8 @@ async function aiBoot() {
       let id = ''; try { id = localStorage.getItem(CONV_KEY) || ''; } catch (err) {}
       if (id) { try { AIV.msgs = (await e.chat.open(id)).filter(m => m.role === 'user' || m.role === 'assistant').map(m => ({ who: m.role === 'user' ? 'me' : 'ai', text: m.role === 'user' ? String(m.content).split(AIV.mod.FOLLOW)[0] : m.content })); } catch (err) { try { localStorage.removeItem(CONV_KEY); } catch (er) {} } }
       // already downloaded: get it ready right away
-      if (AIV.model && await e.models.isCached(AIV.model.id).catch(() => false) && aiCheck().ok) aiLoad();
+      // (only the first, well-tried model gets ready by itself: the others wait for 「AIを準備する」, so a model that does not fit can never close the app on every open)
+      if (!AIV.noAuto && AIV.model && AIV.model.id === ((AIV.mod.MODELS || [])[0] || {}).id && await e.models.isCached(AIV.model.id).catch(() => false) && aiCheck().ok) aiLoad();
       return e;
     } catch (err) { AIV.err = 'AIを起動できませんでした。ページを開き直してください'; AIV.booting = null; throw err; }
   })();
@@ -1139,8 +1149,10 @@ function aiCheck() {
 async function aiLoad(force) {
   const e = AIV.engine; if (!e) return;
   AIV.err = '';
-  try { await e.models.load(AIV.model.id, { contextLength: aiPick().contextLength, ...(force ? { force: true } : {}) }); }
-  catch (err) { AIV.err = err && err.code === 'NETWORK_ERROR' ? 'ダウンロードが途中で止まりました。つながる場所でもう一度お試しください' : err && err.code === 'STORAGE_QUOTA_EXCEEDED' ? '端末の空き容量が足りません' : `AIを準備できませんでした（${(err && err.message) || err}）`; }
+  lsSet(LOADING_KEY, { id: AIV.model.id, at: Date.now() }); // (left behind if the app is closed by iOS while loading)
+  try { await e.models.load(AIV.model.id, { contextLength: aiPick().contextLength, ...(force ? { force: true } : {}) }); try { localStorage.removeItem(LOADING_KEY); } catch (x) {} }
+  catch (err) {
+    try { localStorage.removeItem(LOADING_KEY); } catch (x) {} AIV.err = err && err.code === 'NETWORK_ERROR' ? 'ダウンロードが途中で止まりました。つながる場所でもう一度お試しください' : err && err.code === 'STORAGE_QUOTA_EXCEEDED' ? '端末の空き容量が足りません' : `AIを準備できませんでした（${(err && err.message) || err}）`; }
   aiPaintCard();
 }
 const aiReady = () => AIV.status.state === 'ready' || AIV.status.state === 'generating';
@@ -1156,7 +1168,7 @@ function aiCardHTML() {
   const c = aiCheck();
   return `<div class="ai-card">${ico('sparkle')}<div style="min-width:0"><b>ひび手帳のことを、AIと話せます</b>
     <p>予定・次の予定・空き時間・やることは、このまま聞けます。日記のふりかえりなど、ほかの質問に答えるには、AI（${esc(AIV.model ? AIV.model.name : 'Qwen2.5 1.5B')}・${esc(aiPick().size || '約1GB')}）を一度ダウンロードします。AIは端末の中だけで動き、ひび手帳のデータを外へ送りません。</p>
-    ${AIV.err ? `<p style="color:var(--sun)">${esc(AIV.err)}</p>` : ''}
+    ${AIV.notice ? `<p style="color:var(--sun)">${esc(AIV.notice)}</p>` : ''}${AIV.err ? `<p style="color:var(--sun)">${esc(AIV.err)}</p>` : ''}
     ${c.ok ? '<button class="btn primary" data-act="aiLoad">AIを準備する（Wi-Fiがおすすめ）</button>'
       : c.force ? '<button class="btn primary" data-act="aiForce">AIを準備する</button>' : `<p style="color:var(--sun)">${esc(c.why)}</p>`}</div></div>`;
 }
