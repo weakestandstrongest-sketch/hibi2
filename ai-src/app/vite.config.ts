@@ -6,8 +6,6 @@ export default defineConfig({
   base: "./",
   resolve: {
     conditions: ["source", ...defaultClientConditions],
-    // only the WebLLM model is offered here: leave the Transformers.js library out
-    alias: { "@huggingface/transformers": fileURLToPath(new URL("./no-transformers.ts", import.meta.url)) },
   },
   build: {
     target: ["es2022", "safari16"],

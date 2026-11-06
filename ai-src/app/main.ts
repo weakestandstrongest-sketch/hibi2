@@ -1123,6 +1123,12 @@ function records(src: HibiSource, q: MemoryQuery, now: Date): MemoryRecord[] {
 
 // ---------------------------------------------------------------- engine
 export const RECOMMENDED_MODEL = { id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", contextLength: 2048, label: "Qwen2.5 1.5B" } as const;
+/** The models まいにち offers (設定 → AIのモデル). The first one is the default. */
+export const MODELS = [
+  { id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", contextLength: 2048, label: "Qwen2.5 1.5B", size: "約1GB", note: "いままでのモデル。日本語も自然" },
+  { id: "tjs/LFM2.5-1.2B-JP", contextLength: 2048, label: "LFM2.5 1.2B JP", size: "約1.2GB", note: "日本語向け（Liquid AI・2026年）。メモリが少し少なくて済む" },
+  { id: "gemma3-1b-it-q4f16_1-MLC", contextLength: 2048, label: "Gemma 3 1B", size: "約0.7GB", note: "いちばん軽い。日本語はまあまあ" },
+] as const;
 
 export function createHibiAI(src: HibiSource): PersonalAI & { hibiRoutes(question: string): boolean } {
   const adapter = defineAdapter({
@@ -1148,6 +1154,7 @@ export function createHibiAI(src: HibiSource): PersonalAI & { hibiRoutes(questio
     generation: { temperature: 0.6, maxTokens: 512 },
     backends: {
       webllm: { createWorker: () => new Worker(new URL("./webllm.worker.ts", import.meta.url), { type: "module" }) },
+      transformers: { createWorker: () => new Worker(new URL("./transformers.worker.ts", import.meta.url), { type: "module" }) },
     },
   });
   return Object.assign(engine, {
