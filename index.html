@@ -1126,12 +1126,31 @@ function aiCheck() {
   const force = bad.every(i => i.code === 'MEMORY_INSUFFICIENT' || i.code === 'STORAGE_INSUFFICIENT');
   return { ok: false, force, why: bad.map(i => i.message).join(' ') };
 }
-async function aiLoad(force) {
-  const e = AIV.engine; if (!e) return;
+// iOS can take the GPU away from the page (after it was in the background, or when memory runs short). The AI's insides are then
+// gone ("Object has already been disposed", "Tokenizer instance already deleted"), and loading again in the same engine fails too.
+// Then the whole AI is started again from scratch (the model is already on the iPhone, so this takes a few seconds).
+const AI_DEAD = /disposed|already deleted|device (was |is )?lost|devicelost|GPUDevice|instance.*deleted/i;
+const aiDead = err => AI_DEAD.test(String((err && err.message) || err));
+async function aiReset() {
+  const e = AIV.engine, keep = AIV.msgs; AIV.resetAt = Date.now(); AIV.engine = null; AIV.booting = null; AIV.loading = null; AIV.status = { state: 'uninitialized' }; aiPaintCard();
+  try { if (e) await e.dispose(); } catch (err) {}
+  await aiBoot();
+  AIV.msgs = keep; // (starting again reads the saved conversation: keep the one on the screen, with the question being asked)
+  await aiLoad(true, true);
+}
+function aiLoad(force, again) {
+  if (AIV.loading) return AIV.loading;
+  const e = AIV.engine; if (!e) return Promise.resolve();
   AIV.err = '';
-  try { await e.models.load(AIV.model.id, { contextLength: AIV.mod.RECOMMENDED_MODEL.contextLength, ...(force ? { force: true } : {}) }); }
-  catch (err) { AIV.err = err && err.code === 'NETWORK_ERROR' ? 'ダウンロードが途中で止まりました。つながる場所でもう一度お試しください' : err && err.code === 'STORAGE_QUOTA_EXCEEDED' ? '端末の空き容量が足りません' : `AIを準備できませんでした（${(err && err.message) || err}）`; }
-  aiPaintCard();
+  AIV.loading = (async () => {
+    try { await e.models.load(AIV.model.id, { contextLength: AIV.mod.RECOMMENDED_MODEL.contextLength, ...(force ? { force: true } : {}) }); }
+    catch (err) {
+      if (err && err.code === 'BUSY') return;
+      if (aiDead(err) && !again && Date.now() - (AIV.resetAt || 0) > 20000) { AIV.loading = null; return aiReset(); }
+      AIV.err = err && err.code === 'NETWORK_ERROR' ? 'ダウンロードが途中で止まりました。つながる場所でもう一度お試しください' : err && err.code === 'STORAGE_QUOTA_EXCEEDED' ? '端末の空き容量が足りません' : `AIを準備できませんでした（${(err && err.message) || err}）`;
+    }
+  })().finally(() => { AIV.loading = null; aiPaintCard(); });
+  return AIV.loading;
 }
 const aiReady = () => AIV.status.state === 'ready' || AIV.status.state === 'generating';
 function aiCardHTML() {
@@ -1217,7 +1236,10 @@ async function aiAsk(q) {
   AIV.busy = true;
   const me = { who: 'me', text: q }, a = { who: 'ai', text: '', wait: true };
   AIV.msgs.push(me, a); aiPaintMsgs(true);
+  for (let round = 0; round < 2; round++) {
   try {
+    if (round) { a.text = ''; a.wait = true; a.err = false; a.tool = 'AIを立ち上げ直しています…'; aiPaintMsgs(true); await aiReset(); a.tool = ''; }
+    else if (AIV.loading) await AIV.loading; // still getting ready (just opened): wait for it instead of failing
     const e = await aiBoot();
     if (!S) throw Object.assign(new Error(), { code: 'NO_DATA' });
     // a short follow-up (「あ、4月から10月ね」) that cannot be answered alone: ask it together with the last question one of
@@ -1239,13 +1261,18 @@ async function aiAsk(q) {
       aiPaintMsgs(true);
     }
     if (!a.text) { a.wait = false; a.text = '（止めました）'; }
+    break;
   } catch (err) {
+    if (!round && aiDead(err) && !a.text) continue; // the AI fell apart: start it again and ask once more
     a.wait = false; a.err = true; a.src = [];
     a.text = err && err.code === 'NO_DATA' ? 'ひび手帳のデータがまだ読み込まれていません。「今日」の画面で Google にログインしてください。'
       : err && err.code === 'MODEL_NOT_LOADED' ? 'この質問に答えるには、上の「AIを準備する」でAIをダウンロードしてください。（予定・次の予定・空き時間・やることは、準備しなくても答えられます）'
       : err && err.code === 'ABORTED' ? '（止めました）'
       : `答えられませんでした（${(err && err.message) || err}）`;
-  } finally {
+    break;
+  }
+  }
+  {
     AIV.busy = false; aiPaintMsgs(true);
     try { const id = AIV.engine && AIV.engine.chat.current(); if (id) localStorage.setItem(CONV_KEY, id); } catch (err) {}
   }

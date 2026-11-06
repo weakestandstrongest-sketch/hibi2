@@ -1,6 +1,6 @@
 // Offline support: the page is network-first (so a new version shows up on the next open), icons and fonts are cache-first.
 // The cache name must not start with "hibi-": ひび手帳 (same github.io origin) deletes those caches when it updates.
-const CACHE = 'kyou-v28';
+const CACHE = 'kyou-v29';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {
