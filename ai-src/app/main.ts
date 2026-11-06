@@ -1128,6 +1128,7 @@ export const MODELS = [
   { id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", contextLength: 2048, label: "Qwen2.5 1.5B", size: "約1GB", note: "いままでのモデル。日本語も自然" },
   { id: "tjs/LFM2.5-1.2B-JP", contextLength: 2048, label: "LFM2.5 1.2B JP", size: "約1.2GB", note: "日本語向け（Liquid AI・2026年）。メモリが少し少なくて済む" },
   { id: "gemma3-1b-it-q4f16_1-MLC", contextLength: 2048, label: "Gemma 3 1B", size: "約0.7GB", note: "いちばん軽い。日本語はまあまあ" },
+  { id: "Qwen3-0.6B-q4f16_1-MLC", contextLength: 2048, label: "Qwen3 0.6B", size: "約0.5GB", note: "新しくて軽い（2025年）。日本語はまあまあ" },
 ] as const;
 
 export function createHibiAI(src: HibiSource): PersonalAI & { hibiRoutes(question: string): boolean } {
