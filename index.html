@@ -1103,7 +1103,8 @@ async function aiBoot() {
       let id = ''; try { id = localStorage.getItem(CONV_KEY) || ''; } catch (err) {}
       if (id) { try { AIV.msgs = (await e.chat.open(id)).filter(m => m.role === 'user' || m.role === 'assistant').map(m => ({ who: m.role === 'user' ? 'me' : 'ai', text: m.role === 'user' ? String(m.content).split(AIV.mod.FOLLOW)[0] : m.content })); } catch (err) { try { localStorage.removeItem(CONV_KEY); } catch (er) {} } }
       // already downloaded: get it ready right away
-      if (AIV.model && await e.models.isCached(AIV.model.id).catch(() => false) && aiCheck().ok) aiLoad();
+      // (the memory guess is only a guess: it runs fine on this iPhone, so it is not asked about)
+      if (AIV.model && await e.models.isCached(AIV.model.id).catch(() => false)) { const c = aiCheck(); if (c.ok || c.force) aiLoad(!c.ok); }
       return e;
     } catch (err) { AIV.err = 'AIを起動できませんでした。ページを開き直してください'; AIV.booting = null; throw err; }
   })();
@@ -1140,8 +1141,7 @@ function aiCardHTML() {
   return `<div class="ai-card">${ico('sparkle')}<div style="min-width:0"><b>ひび手帳のことを、AIと話せます</b>
     <p>予定・次の予定・空き時間・やることは、このまま聞けます。日記のふりかえりなど、ほかの質問に答えるには、AI（${esc(AIV.model ? AIV.model.name : 'Qwen2.5 1.5B')}・約1GB）を一度ダウンロードします。AIは端末の中だけで動き、ひび手帳のデータを外へ送りません。</p>
     ${AIV.err ? `<p style="color:var(--sun)">${esc(AIV.err)}</p>` : ''}
-    ${c.ok ? '<button class="btn primary" data-act="aiLoad">AIを準備する（Wi-Fiがおすすめ）</button>'
-      : c.force ? `<p style="color:var(--sun)">${esc(c.why)}</p><button class="btn" data-act="aiForce">それでも試す</button>` : `<p style="color:var(--sun)">${esc(c.why)}</p>`}</div></div>`;
+    ${c.ok || c.force ? `<button class="btn primary" data-act="${c.ok ? 'aiLoad' : 'aiForce'}">AIを準備する（Wi-Fiがおすすめ）</button>` : `<p style="color:var(--sun)">${esc(c.why)}</p>`}</div></div>`;
 }
 function aiPaintCard() { const el = $('#ai-card'); if (el) el.innerHTML = aiCardHTML(); }
 // the same words as ひび手帳's 予定の画面
