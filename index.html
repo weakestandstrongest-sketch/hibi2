@@ -550,6 +550,36 @@ async function gdFetch(url, init = {}) {
   if (!r.ok) throw new Error('drive ' + r.status);
   return r;
 }
+/* ================= ひび手帳が「ドライブのデータを暗号化」しているとき =================
+   hibi.json は {"app":"hibi-enc",…} の形。ひび手帳で決めた合言葉か復旧キーで、ドライブの hibi-key.json から鍵を取り出して読む。
+   鍵はこの端末に残す（kyou.vault）。同じ Safari のひび手帳の鍵（hibi.vault）があれば、それを使う。ここからは何も書かない。 */
+const VK_KEY = 'kyou.vault', VK_HEAD = '{"app":"hibi-enc"';
+let VK = (() => { for (const k of [VK_KEY, 'hibi.vault']) { const v = lsGet(k); if (v && v.k && v.kid) return v; } return null; })(), vkNeed = false;
+const vkEnc = new TextEncoder();
+const vkUn = x => Uint8Array.from(atob(String(x).replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((String(x).length + 3) % 4)), c => c.charCodeAt(0));
+const vkB64 = a => btoa(String.fromCharCode(...a)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const vkIs = t => typeof t === 'string' && t.startsWith(VK_HEAD);
+async function vkOpen(t) {
+  if (!vkIs(t)) return t;
+  const o = JSON.parse(t); if (!VK || VK.kid !== o.kid) { vkNeed = true; throw new Error('vault'); }
+  const k = await crypto.subtle.importKey('raw', vkUn(VK.k), 'AES-GCM', false, ['decrypt']);
+  return new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: vkUn(o.iv) }, k, vkUn(o.ct)));
+}
+async function vkUnwrap(w, secret) {
+  const base = await crypto.subtle.importKey('raw', vkEnc.encode(secret), 'PBKDF2', false, ['deriveKey']);
+  const kek = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt: vkUn(w.salt), iterations: w.iter || 310000, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+  return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: vkUn(w.iv) }, kek, vkUn(w.ct)));
+}
+async function vkTry(x) {
+  const u = `${GD_API}?spaces=appDataFolder&pageSize=5&fields=files(id)&q=${encodeURIComponent("name='hibi-key.json' and trashed=false")}`;
+  const f = ((await (await gdFetch(u)).json()).files || [])[0]; if (!f) return 'none';
+  const kf = await (await gdFetch(`${GD_API}/${f.id}?alt=media`)).json();
+  let raw = null; try { raw = await vkUnwrap(kf.p, x); } catch (e) {}
+  const r = String(x).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!raw && r.length === 32) try { raw = await vkUnwrap(kf.r, r); } catch (e) {}
+  if (!raw) return 'bad';
+  VK = { kid: kf.kid, k: vkB64(raw) }; vkNeed = false; lsSet(VK_KEY, VK); return 'ok';
+}
 // the newest hibi.json every time: the drive can hold more than one (ひび手帳 makes a new one after logging in again
 // or when the old one is gone), and only the one ひび手帳 is writing to now keeps changing
 async function gdFind() {
@@ -652,14 +682,15 @@ async function load(manual) {
     // when the newest file has not changed since last time, skip the download
     const at = Date.parse(meta.modifiedTime) || Date.now();
     if (!manual && D && D.src === 'drive' && D.at === at && D.fid === meta.id && D.v === DATA_V) { D.got = Date.now(); lsSet(DATA_KEY, D); await ibCheck(); return; }
-    const o = await (await gdFetch(`${GD_API}/${meta.id}?alt=media`)).json();
+    const o = JSON.parse(await vkOpen(await (await gdFetch(`${GD_API}/${meta.id}?alt=media`)).text()));
     const s = o && o.data ? o.data : o;
     if (!s || !Array.isArray(s.events)) throw new Error('shape');
     setData(s, at, 'drive', meta.id, o);
     await ibCheck();
     if (manual) toast('最新の予定を読み込みました');
   } catch (e) {
-    err = e.message === 'revoked' ? 'Googleのログインが切れました。もう一度ログインしてください'
+    err = e.message === 'vault' ? 'ひび手帳でドライブのデータを暗号化しています。設定で、ひび手帳の合言葉を入れてください'
+      : e.message === 'revoked' ? 'Googleのログインが切れました。もう一度ログインしてください'
       : navigator.onLine === false ? 'オフラインです。前に読み込んだ予定を表示しています'
       : e.message === 'token' ? 'ログインの確認ができませんでした（乗換案内のURLを確かめてください）'
       : '読み込めませんでした。少ししてからもう一度お試しください';
@@ -869,6 +900,12 @@ const nowRow = now => `<div class="row now"><div class="t num">${hmM(now)}</div>
 
 function hello() {
   const local = !!hibiLocal();
+  // logged in, but ひび手帳 encrypts the drive and this phone has no key yet
+  if (gd.rt && vkNeed) return `${head(todayISO(), '')}<div class="hello"><img class="logo" src="icons/icon-192.png" alt="">
+    <h2>データが暗号化されています</h2>
+    <p>ひび手帳でドライブのデータを暗号化しています。ひび手帳で決めた<b>合言葉</b>か<b>復旧キー</b>を入れると読めます。</p>
+    <div class="fld"><input id="vk-in" type="password" autocomplete="current-password" placeholder="合言葉 または 復旧キー" autocapitalize="off" spellcheck="false"></div>
+    <button class="btn primary" data-act="vkGo">開く</button></div>`;
   return `${head(todayISO(), '')}<div class="hello"><img class="logo" src="icons/icon-192.png" alt="">
     <h2>ひび手帳の「今日」だけ</h2>
     <p>ひび手帳のタイムラインから、今日の予定だけを表示します。<br>月の表示や日記は開きません。</p>
@@ -924,6 +961,7 @@ function routeHTML(ev, items, packed, c) {
 function settingsHTML() {
   return `<p class="lbl" style="margin-top:0">Google</p><div class="card" style="padding:12px 14px">
       ${gd.rt ? `<p class="note" style="margin:0 0 4px">ログイン中：<b>${esc(gd.email || 'Google')}</b></p>
+        ${vkNeed ? `<div class="fld"><input id="vk-in" type="password" autocomplete="current-password" placeholder="ひび手帳の合言葉 または 復旧キー" autocapitalize="off" spellcheck="false"></div><button class="btn primary" data-act="vkGo">暗号化されたデータを開く</button>` : ''}
         <button class="btn" data-act="reload">いま読み込み直す</button><button class="btn ghost" data-act="logout">ログアウト</button>`
       : `<button class="btn primary" data-act="login" style="margin-top:0">Googleでログイン</button>`}</div>
     <p class="lbl">乗換案内のURL（ログインに使います）</p>
@@ -940,6 +978,11 @@ const ACT = {
   open: t => { const k = t.dataset.k; const o = k[0] === 'a' ? VIEW_ALL[+k.slice(1)] : VIEW[+k]; if (o && o.ev) openSheet(detail(o)); },
   close: () => closeSheet(),
   reload: () => load(true),
+  vkGo: async t => {
+    const x = (t.parentElement.querySelector('#vk-in') || {}).value || ''; if (!x.trim()) return; toast('確かめています…');
+    try { const r = await vkTry(x.trim()); if (r === 'bad') { toast('合言葉か復旧キーがちがいます'); return; } closeSheet(); toast('開けました'); load(true); }
+    catch (e) { toast('確かめられませんでした。通信を確かめてください'); }
+  },
   login: () => gdLogin(),
   settings: () => openSheet(settingsHTML()),
   logout: () => {
