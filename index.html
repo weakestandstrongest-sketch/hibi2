@@ -1124,7 +1124,8 @@ async function aiBoot() {
       }
       // already downloaded: get it ready right away
       // (the memory guess is only a guess: it runs fine on this iPhone, so it is not asked about)
-      if (AIV.model && await e.models.isCached(AIV.model.id).catch(() => false)) { const c = aiCheck(); if (c.ok || c.force) aiLoad(!c.ok); }
+      AIV.cached = !!(AIV.model && await e.models.isCached(AIV.model.id).catch(() => false));
+      if (AIV.cached) { const c = aiCheck(); if (c.ok || c.force) aiLoad(!c.ok); }
       return e;
     } catch (err) { AIV.err = 'AIを起動できませんでした。ページを開き直してください'; AIV.booting = null; throw err; }
   })();
@@ -1143,7 +1144,7 @@ function aiCheck() {
 // iOS can take the GPU away from the page (after it was in the background, or when memory runs short). The AI's insides are then
 // gone ("Object has already been disposed", "Tokenizer instance already deleted"), and loading again in the same engine fails too.
 // Then the whole AI is started again from scratch (the model is already on the iPhone, so this takes a few seconds).
-const AI_DEAD = /disposed|already deleted|device (was |is )?lost|devicelost|GPUDevice|instance.*deleted/i;
+const AI_DEAD = /disposed|already deleted|GPU を利用できません|device (was |is )?lost|devicelost|GPUDevice|instance.*deleted/i;
 const aiDead = err => AI_DEAD.test(String((err && err.message) || err));
 async function aiReset(q) {
   const e = AIV.engine, keep = AIV.msgs; AIV.resetAt = Date.now(); AIV.engine = null; AIV.booting = null; AIV.loading = null; AIV.status = { state: 'uninitialized' }; aiPaintCard();
@@ -1188,8 +1189,8 @@ function aiCardHTML() {
   const c = aiCheck();
   return `<div class="ai-card">${ico('sparkle')}<div style="min-width:0"><b>ひび手帳のことを、AIと話せます</b>
     <p>予定・次の予定・空き時間・やることは、このまま聞けます。日記のふりかえりなど、ほかの質問に答えるには、AI（${esc(AIV.model ? AIV.model.name : 'Qwen2.5 1.5B')}・約1GB）を一度ダウンロードします。AIは端末の中だけで動き、ひび手帳のデータを外へ送りません。</p>
-    ${AIV.err ? `<p style="color:var(--sun)">${esc(AIV.err)}</p>` : ''}
-    ${c.ok || c.force ? `<button class="btn primary" data-act="${c.ok ? 'aiLoad' : 'aiForce'}">AIを準備する（Wi-Fiがおすすめ）</button>` : `<p style="color:var(--sun)">${esc(c.why)}</p>`}</div></div>`;
+    ${AIV.err && (c.ok || c.force) ? `<p style="color:var(--sun)">${esc(AIV.err)}</p>` : ''}
+    ${c.ok || c.force ? `<button class="btn primary" data-act="${c.ok ? 'aiLoad' : 'aiForce'}">${AIV.cached ? 'AIを準備する' : 'AIを準備する（Wi-Fiがおすすめ）'}</button>` : `<p style="color:var(--sun)">${esc(c.why)}</p>${AIV.engine && AIV.engine.capabilities && AIV.engine.capabilities.webgpu.apiPresent ? '<button class="btn primary" data-act="aiRetry">もう一度試す</button>' : ''}`}</div></div>`;
 }
 function aiPaintCard() { const el = $('#ai-card'); if (el) el.innerHTML = aiCardHTML(); }
 // the same words as ひび手帳's 予定の画面
@@ -1291,9 +1292,10 @@ async function aiAsk(q) {
     if (!a.text) { a.wait = false; a.text = '（止めました）'; }
     break;
   } catch (err) {
-    if (!round && aiDead(err) && !a.text) continue; // the AI fell apart: start it again and ask once more
+    if (!round && !a.text && (aiDead(err) || (err && err.code === 'MODEL_NOT_LOADED' && AIV.cached))) continue; // the AI fell apart (or is not ready although it is on the phone): start it again and ask once more
     a.wait = false; a.err = true; a.src = [];
     a.text = err && err.code === 'NO_DATA' ? 'ひび手帳のデータがまだ読み込まれていません。「今日」の画面で Google にログインしてください。'
+      : err && err.code === 'MODEL_NOT_LOADED' && AIV.cached ? 'AIを準備できませんでした。上の「もう一度試す」を押すか、まいにちを開き直してください。（予定・次の予定・空き時間・やることは、このまま答えられます）'
       : err && err.code === 'MODEL_NOT_LOADED' ? 'この質問に答えるには、上の「AIを準備する」でAIをダウンロードしてください。（予定・次の予定・空き時間・やることは、準備しなくても答えられます）'
       : err && err.code === 'ABORTED' ? '（止めました）'
       : `答えられませんでした（${(err && err.message) || err}）`;
@@ -1310,6 +1312,7 @@ Object.assign(ACT, {
   aiAsk: t => aiAsk(t.dataset.q),
   aiLoad: () => aiLoad(false),
   aiForce: () => aiLoad(true),
+  aiRetry: () => { AIV.rebooted = false; aiReset(); },
   aiYes: () => {
     const m = AIV.msgs.find(x => x.confirm); if (!m) return;
     const v = id => ($('#' + id) || {}).value || '', title = v('cf-title').trim(), date = v('cf-date'), allDay = !!($('#cf-allday') || {}).checked, start = v('cf-start'), end = v('cf-end');
@@ -1362,6 +1365,11 @@ gdFromHash(); applyTheme(); render(); paintTabs(false); if (tab === 'ai') aiOpen
 let lastDay = todayISO();
 setInterval(() => { if (document.visibilityState === 'visible' && !sheet && tab === 'today') render(); if (todayISO() !== lastDay) { lastDay = todayISO(); load(); } }, 30000);
 setInterval(() => { if (document.visibilityState === 'visible') load(); }, 120000);
+let aiAway = 0;
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') { if (AIV.engine && aiReady() && !AIV.busy) { aiAway = 1; AIV.engine.models.unload().catch(() => {}); } }
+  else if (aiAway && AIV.engine) { aiAway = 0; gpuWarm(20000).then(() => aiLoad(true)); }
+});
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   render(); load();
