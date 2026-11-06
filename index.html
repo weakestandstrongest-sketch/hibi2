@@ -1094,11 +1094,17 @@ const CONV_KEY = 'mainichi.conv';
 const FOLLOW_WORDS = /今日|きょう|明日|あした|昨日|きのう|明後日|あさって|一昨日|おととい|今週|来週|先週|再来週|今月|来月|先月|今年|来年|去年|昨年|[0-9０-９]+|[一二三四五六七八九十]+|年|月|日|週|曜日?|[月火水木金土]曜|半|時|分|から|まで|の|は|で|が|に|と|も|って|なら|だと|だったら|では|じゃあ|じゃ|あ|え|ね|よ|か|かな|？|\?|！|!|、|。|,|\.|\s/g;
 const isFollowUp = q => q.length <= 30 && /[0-9０-９]|今日|きょう|明日|あした|昨日|きのう|明後日|あさって|一昨日|おととい|週|月|年|曜/.test(q) && q.replace(FOLLOW_WORDS, '').length <= 1 && !/日記|メモ|記事|ニュース|天気|場所|曲|気持ち|予定を|追加|入れて/.test(q);
 const SUGG = ['今日の予定は？', '次の予定は？', '明日の予定は？', '今日の空き時間は？', 'やることは？', '明日15時から17時までバイトを追加して', '名古屋から岐阜までの経路を調べて', '今日のニュースは？', '今日の天気は？', '先週の日記をふりかえって'];
+// the AI gives up on the GPU when it does not answer within 5 seconds, and an iPhone can take longer than that
+// (just opened, or after the app was in the background). Wait for it here first, so the AI finds it ready.
+async function gpuWarm(ms) {
+  try { if (!navigator.gpu) return false; return !!(await Promise.race([navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }), new Promise(r => setTimeout(() => r(null), ms))])); } catch (e) { return false; }
+}
 async function aiBoot() {
   if (AIV.engine) return AIV.engine;
   if (!AIV.booting) AIV.booting = (async () => {
     try {
-      AIV.mod = await import('./ai/mainichi-ai.js');
+      const [mod] = await Promise.all([import('./ai/mainichi-ai.js'), gpuWarm(20000)]);
+      AIV.mod = mod;
       const e = AIV.mod.createHibiAI(hibiSource);
       e.on('inference', st => { AIV.status = st; aiPaintCard(); });
       await e.initialize();
@@ -1111,7 +1117,11 @@ async function aiBoot() {
       let id = ''; try { id = localStorage.getItem(CONV_KEY) || ''; } catch (err) {}
       if (id) { try { AIV.msgs = (await e.chat.open(id)).filter(m => m.role === 'user' || m.role === 'assistant').map(m => ({ who: m.role === 'user' ? 'me' : 'ai', text: m.role === 'user' ? String(m.content).split(AIV.mod.FOLLOW)[0] : m.content })); } catch (err) { try { localStorage.removeItem(CONV_KEY); } catch (er) {} } }
       // WebGPU is there but the GPU is not (iOS took it away): only opening the page again brings it back
-      if (e.capabilities && e.capabilities.webgpu.apiPresent && !e.capabilities.webgpu.adapterAvailable && aiReload(AIV.asking || '')) return e;
+      if (e.capabilities && e.capabilities.webgpu.apiPresent && !e.capabilities.webgpu.adapterAvailable) {
+        // the GPU answered late: start the AI once more now that it is there; only if it never comes, open the page again
+        if (!AIV.rebooted && await gpuWarm(15000)) { AIV.rebooted = true; AIV.engine = null; AIV.model = null; try { await e.dispose(); } catch (err) {} AIV.booting = null; return aiBoot(); }
+        if (aiReload(AIV.asking || '')) return e;
+      }
       // already downloaded: get it ready right away
       // (the memory guess is only a guess: it runs fine on this iPhone, so it is not asked about)
       if (AIV.model && await e.models.isCached(AIV.model.id).catch(() => false)) { const c = aiCheck(); if (c.ok || c.force) aiLoad(!c.ok); }
