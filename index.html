@@ -47,6 +47,8 @@ svg{display:block}
 @media (hover:none){button:not(:disabled):not(.tb):active{opacity:.55}}
 
 #app,.page{max-width:560px;margin:0 auto;padding:calc(env(safe-area-inset-top,0px) + 40px) 16px calc(env(safe-area-inset-bottom,0px) + 110px)}
+/* inside ひび手帳's sheet: it already sits below the status bar (the iPhone app hands frames the notch inset too, which left a big gap) */
+html.in-frame #app,html.in-frame .page{padding-top:40px}
 
 /* header */
 .hd{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:6px}
@@ -292,6 +294,7 @@ svg{display:block}
 .mdl span{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}.mdl small{color:var(--ink-3);font-size:12px}
 .mdl i{width:20px;color:var(--accent)}.mdl i .ico{width:20px;height:20px}
 </style>
+<script>if (window.parent !== window) document.documentElement.classList.add('in-frame'); /* in ひび手帳's sheet: no notch gap at the top */</script>
 </head>
 <body>
 <div id="splash" aria-hidden="true"><i class="sp-star" style="left:12%;top:14%;--s:3px;animation-delay:0.05s"></i><i class="sp-star" style="left:26%;top:8%;--s:2px;animation-delay:0.10s"></i><i class="sp-star" style="left:41%;top:18%;--s:4px;animation-delay:0.15s"></i><i class="sp-star" style="left:58%;top:10%;--s:2px;animation-delay:0.20s"></i><i class="sp-star" style="left:73%;top:16%;--s:3px;animation-delay:0.25s"></i><i class="sp-star" style="left:88%;top:7%;--s:2px;animation-delay:0.30s"></i><i class="sp-star" style="left:18%;top:30%;--s:2px;animation-delay:0.35s"></i><i class="sp-star" style="left:34%;top:36%;--s:3px;animation-delay:0.40s"></i><i class="sp-star" style="left:64%;top:28%;--s:2px;animation-delay:0.45s"></i><i class="sp-star" style="left:82%;top:33%;--s:4px;animation-delay:0.50s"></i><i class="sp-star" style="left:50%;top:24%;--s:2px;animation-delay:0.55s"></i><i class="sp-star" style="left:8%;top:44%;--s:3px;animation-delay:0.60s"></i><i class="sp-star" style="left:93%;top:46%;--s:2px;animation-delay:0.65s"></i><i class="sp-star" style="left:28%;top:52%;--s:2px;animation-delay:0.70s"></i><i class="sp-star" style="left:71%;top:50%;--s:3px;animation-delay:0.75s"></i><svg viewBox="80 110 352 320">
