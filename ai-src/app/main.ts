@@ -9,6 +9,7 @@
  */
 import { PersonalAI, defineAdapter, type AITool, type MemoryQuery, type MemoryRecord, type ToolContext } from "@personal-ai-engine/core";
 import { addDays, dayOf, parseDateIntent } from "@personal-ai-engine/retrieval";
+import { NativeBackend, appleWhy, isNativeApp, nativePlugin } from "./native";
 
 /** One timed item of a day, as the まいにち timeline draws it. */
 export interface DayItem {
@@ -1122,14 +1123,28 @@ function records(src: HibiSource, q: MemoryQuery, now: Date): MemoryRecord[] {
 }
 
 // ---------------------------------------------------------------- engine
-export const RECOMMENDED_MODEL = { id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", contextLength: 2048, label: "Qwen2.5 1.5B" } as const;
-/** The models まいにち offers (設定 → AIのモデル). The first one is the default. */
-export const MODELS = [
-  { id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", contextLength: 2048, label: "Qwen2.5 1.5B", size: "約1GB", note: "いままでのモデル。日本語も自然" },
-  { id: "tjs/LFM2.5-1.2B-JP", contextLength: 2048, label: "LFM2.5 1.2B JP", size: "約1.2GB", note: "日本語向け（Liquid AI・2026年）。メモリが少し少なくて済む" },
-  { id: "gemma3-1b-it-q4f16_1-MLC", contextLength: 2048, label: "Gemma 3 1B", size: "約0.7GB", note: "いちばん軽い。日本語はまあまあ" },
-  { id: "Qwen3-0.6B-q4f16_1-MLC", contextLength: 2048, label: "Qwen3 0.6B", size: "約0.5GB", note: "新しくて軽い（2025年）。日本語はまあまあ" },
+/** The models まいにち offers in the browser (GitHub Pages): only the well-tried one. */
+const WEB_MODELS = [
+  { id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", contextLength: 2048, label: "Qwen2.5 1.5B", size: "約1GB", note: "ブラウザ版のAI。アプリ版ではほかのモデルも選べます" },
 ] as const;
+/** The models まいにち offers inside ひび手帳's iPhone app (設定 → AIのモデル). They run on the iPhone itself (app/native.ts). The first one is the default. */
+const APP_MODELS = [
+  { id: "native/apple-intelligence", contextLength: 4096, label: "Apple Intelligence", size: "ダウンロードなし", note: "iPhoneに入っているAppleのモデル。すぐ使えて、落ちにくい" },
+  { id: "native/gemma-4-E4B", contextLength: 4096, label: "Gemma 4 E4B", size: "約5.0GB", note: "Google・2026年4月。日本語が自然" },
+  { id: "native/qwen3.5-4B", contextLength: 4096, label: "Qwen3.5 4B", size: "約2.7GB", note: "Alibaba・2026年3月。考える力が強い" },
+  { id: "native/lfm3-vl-2B", contextLength: 4096, label: "LFM3 VL 2B", size: "約1.1GB", note: "Liquid AI・2026年。小さくて速い" },
+  { id: "native/llm-jp-4.1-8B", contextLength: 4096, label: "LLM-jp-4.1 8B", size: "約5.5GB", note: "国立情報学研究所。日本語を最優先。重い" },
+  { id: "native/ternary-bonsai-2-9B", contextLength: 4096, label: "Ternary Bonsai 2 9B", size: "約2.6GB", note: "PrismML。9Bを小さくしたもの" },
+] as const;
+export const IN_APP = isNativeApp();
+export const MODELS: ReadonlyArray<{ id: string; contextLength: number; label: string; size: string; note: string }> = IN_APP ? APP_MODELS : WEB_MODELS;
+export const RECOMMENDED_MODEL = { id: MODELS[0]!.id, contextLength: MODELS[0]!.contextLength, label: MODELS[0]!.label } as const;
+/** Can this model be used right now? ("" = yes; else why not, in Japanese). Only Apple Intelligence can be unavailable without a download. */
+export async function nativeWhy(modelId: string): Promise<string> {
+  const p = nativePlugin();
+  if (!p || modelId !== "native/apple-intelligence") return "";
+  try { return appleWhy((await p.info({ files: [] })).apple); } catch { return ""; }
+}
 
 export function createHibiAI(src: HibiSource): PersonalAI & { hibiRoutes(question: string): boolean } {
   const adapter = defineAdapter({
@@ -1158,6 +1173,8 @@ export function createHibiAI(src: HibiSource): PersonalAI & { hibiRoutes(questio
       transformers: { createWorker: () => new Worker(new URL("./transformers.worker.ts", import.meta.url), { type: "module" }) },
     },
   });
+  // inside ひび手帳's iPhone app: the models run on the iPhone itself (llama.cpp / Apple Intelligence)
+  engine.backends.register("native", () => new NativeBackend());
   return Object.assign(engine, {
     /** Would one of ひび手帳's exact tools answer this (without the model)? The page uses it for follow-ups. */
     hibiRoutes(question: string): boolean {

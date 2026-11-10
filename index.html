@@ -1131,6 +1131,7 @@ async function aiBoot() {
         AIV.noAuto = true;
       }
       AIV.engine = e; AIV.model = e.models.get(aiPick().id) || e.models.get(AIV.mod.RECOMMENDED_MODEL.id);
+      if (AIV.mod.nativeWhy && AIV.model) AIV.nativeWhy = await AIV.mod.nativeWhy(AIV.model.id).catch(() => '');
       // for checking what the AI can find: only with ?debug in the address
       if (/[?&]debug\b/.test(location.search)) window.__mainichiSearch = q => e.config.adapter.searchData(q);
       // back to the last conversation
@@ -1138,7 +1139,8 @@ async function aiBoot() {
       if (id) { try { AIV.msgs = (await e.chat.open(id)).filter(m => m.role === 'user' || m.role === 'assistant').map(m => ({ who: m.role === 'user' ? 'me' : 'ai', text: m.role === 'user' ? String(m.content).split(AIV.mod.FOLLOW)[0] : m.content })); } catch (err) { try { localStorage.removeItem(CONV_KEY); } catch (er) {} } }
       // already downloaded: get it ready right away
       // (only the first, well-tried model gets ready by itself: the others wait for 「AIを準備する」, so a model that does not fit can never close the app on every open)
-      if (!AIV.noAuto && AIV.model && AIV.model.id === ((AIV.mod.MODELS || [])[0] || {}).id && await e.models.isCached(AIV.model.id).catch(() => false) && aiCheck().ok) aiLoad();
+      // (in the iPhone app a downloaded model gets ready by itself too: if it ever closes the app, the next open goes back to Apple Intelligence)
+      if (!AIV.noAuto && AIV.model && (AIV.model.id === ((AIV.mod.MODELS || [])[0] || {}).id || AIV.model.backend === 'native') && await e.models.isCached(AIV.model.id).catch(() => false) && aiCheck().ok) aiLoad();
       return e;
     } catch (err) { AIV.err = 'AIを起動できませんでした。ページを開き直してください'; AIV.booting = null; throw err; }
   })();
@@ -1148,6 +1150,8 @@ async function aiBoot() {
 function aiCheck() {
   const e = AIV.engine, caps = e && e.capabilities;
   if (!e || !AIV.model) return { ok: false, why: 'AIを起動しています…' };
+  // in ひび手帳's iPhone app the model runs on the iPhone itself: no WebGPU, no browser memory limit
+  if (AIV.model.backend === 'native') return AIV.nativeWhy ? { ok: false, why: AIV.nativeWhy } : { ok: true };
   if (caps && !caps.webgpu.adapterAvailable) return { ok: false, why: 'この端末・ブラウザでは WebGPU が使えないため、AIを動かせません（iPhone は iOS 26 以降の Safari でお使いください）。予定・やること・空き時間の質問には答えられます。' };
   const rep = e.models.checkCompatibility(AIV.model, aiPick().contextLength), bad = rep.issues.filter(i => i.severity === 'error');
   if (!bad.length) return { ok: true };
@@ -1170,10 +1174,21 @@ function aiCardHTML() {
   const st = AIV.status;
   if (st.state === 'loading') {
     const f = st.progress && typeof st.progress.fraction === 'number' ? st.progress.fraction : 0;
-    return `<div class="ai-card">${ico('sparkle')}<div style="flex:1;min-width:0"><b>AIを準備しています… ${Math.round(f * 100)}%</b><p>はじめてのときは約1GBをダウンロードします。この画面のままお待ちください。</p><div class="bar"><i style="width:${(f * 100).toFixed(1)}%"></i></div></div></div>`;
+    const dl = st.progress && st.progress.phase === 'download', gb = b => (b / 1e9).toFixed(b >= 1e10 ? 0 : 1);
+    const sz = dl && st.progress.totalBytes ? `（${gb(st.progress.loadedBytes || 0)} / ${gb(st.progress.totalBytes)}GB）` : '';
+    const head = dl ? `AIをダウンロードしています… ${Math.round(f * 100)}%${sz}` : AIV.model && AIV.model.backend === 'native' ? 'AIを読み込んでいます…' : `AIを準備しています… ${Math.round(f * 100)}%`;
+    const note = dl ? `はじめてのときだけ${esc(aiPick().size || '')}をダウンロードします。この画面のままお待ちください（Wi-Fiがおすすめ）。` : AIV.model && AIV.model.backend === 'native' ? '少しお待ちください。' : 'はじめてのときは約1GBをダウンロードします。この画面のままお待ちください。';
+    return `<div class="ai-card">${ico('sparkle')}<div style="flex:1;min-width:0"><b>${head}</b><p>${note}</p><div class="bar"><i style="width:${(f * 100).toFixed(1)}%"></i></div></div></div>`;
   }
   if (aiReady()) return `<div class="ai-card slim">${ico('sparkle')}<b>AI（${esc(AIV.model.name)}）を使えます・端末の中だけで動いています</b></div>`;
   const c = aiCheck();
+  if (AIV.model && AIV.model.backend === 'native') {
+    const apple = AIV.model.id === 'native/apple-intelligence';
+    return `<div class="ai-card">${ico('sparkle')}<div style="min-width:0"><b>ひび手帳のことを、AIと話せます</b>
+    <p>予定・次の予定・空き時間・やることは、このまま聞けます。日記のふりかえりなど、ほかの質問には AI（${esc(AIV.model.name)}）が答えます。${apple ? 'iPhoneに入っているAppleのモデルなので、ダウンロードはいりません。' : `はじめてのときだけ、モデル（${esc(aiPick().size || '')}）をダウンロードします。`}AIはiPhoneの中だけで動き、ひび手帳のデータを外へ送りません。モデルは 設定 → AIのモデル で変えられます。</p>
+    ${AIV.notice ? `<p style="color:var(--sun)">${esc(AIV.notice)}</p>` : ''}${AIV.err ? `<p style="color:var(--sun)">${esc(AIV.err)}</p>` : ''}
+    ${c.ok ? `<button class="btn primary" data-act="aiLoad">${apple ? 'AIを使う' : 'AIを準備する（Wi-Fiがおすすめ）'}</button>` : `<p style="color:var(--sun)">${esc(c.why)}</p>`}</div></div>`;
+  }
   return `<div class="ai-card">${ico('sparkle')}<div style="min-width:0"><b>ひび手帳のことを、AIと話せます</b>
     <p>予定・次の予定・空き時間・やることは、このまま聞けます。日記のふりかえりなど、ほかの質問に答えるには、AI（${esc(AIV.model ? AIV.model.name : 'Qwen2.5 1.5B')}・${esc(aiPick().size || '約1GB')}）を一度ダウンロードします。AIは端末の中だけで動き、ひび手帳のデータを外へ送りません。</p>
     ${AIV.notice ? `<p style="color:var(--sun)">${esc(AIV.notice)}</p>` : ''}${AIV.err ? `<p style="color:var(--sun)">${esc(AIV.err)}</p>` : ''}
@@ -1319,7 +1334,9 @@ Object.assign(ACT, {
     const m = e.models.get(id); if (!m) { toast('このモデルは使えません'); return; }
     lsSet(MODEL_KEY, id);
     try { if (AIV.loading) await AIV.loading; if (e.models.current()) await e.models.unload(); } catch (err) {}
-    AIV.model = m; AIV.err = ''; AIV.status = { state: 'idle' }; closeSheet(); aiPaintCard();
+    AIV.model = m; AIV.err = ''; AIV.status = { state: 'idle' };
+    AIV.nativeWhy = AIV.mod.nativeWhy ? await AIV.mod.nativeWhy(id).catch(() => '') : '';
+    closeSheet(); aiPaintCard();
     toast(`${aiPick().label} にしました。「AIを準備する」で使えるようにします`);
   },
   aiDeleteOthers: async () => {
@@ -1330,7 +1347,8 @@ Object.assign(ACT, {
   },
   aiDelete: async () => {
     if (!AIV.engine || !AIV.model) return;
-    if (!confirm('ダウンロードしたAIを、この端末から削除しますか？（約1GB空きます。また使うときは、ダウンロードし直します）')) return;
+    if (AIV.model.id === 'native/apple-intelligence') { toast('Apple Intelligence はiPhoneに入っているので、削除できません'); return; }
+    if (!confirm(`ダウンロードしたAIを、この端末から削除しますか？（${aiPick().size && /GB/.test(aiPick().size) ? aiPick().size : '約1GB'}空きます。また使うときは、ダウンロードし直します）`)) return;
     await AIV.engine.models.deleteCache(AIV.model.id).catch(() => {}); closeSheet(); aiPaintCard(); toast('AIを削除しました');
   },
 });
