@@ -134,11 +134,16 @@ export function renderPrompt(templateName: string, messages: ChatMessage[], spec
 /** For Apple Intelligence: the system messages become its instructions, the rest one prompt. */
 export function applePrompt(messages: ChatMessage[]): { instructions: string; prompt: string } {
   const msgs = toTemplateMessages(messages);
-  const instructions = msgs[0]?.role === "system" ? msgs.shift()!.content : "";
+  let instructions = msgs[0]?.role === "system" ? msgs.shift()!.content : "";
+  // Apple's guidance: instructions say how to behave; the data goes in the prompt (records in the instructions were read back as the answer)
+  const cut = instructions.search(/\n#\s*(記録|ツールの結果)/);
+  const data = cut >= 0 ? instructions.slice(cut + 1).trim() : "";
+  if (cut >= 0) instructions = instructions.slice(0, cut).trim();
   const last = msgs.pop();
   const history = msgs.map((m) => `${m.role === "user" ? "ユーザー" : "あなた"}: ${m.content}`).join("\n");
   const q = last?.content ?? "";
-  return { instructions, prompt: history ? `これまでの会話:\n${history}\n\nユーザー: ${q}` : q };
+  const parts = [data ? `${data}\n\n（上の記録は答えの材料です。そのまま書き写さず、質問への答えを自分の言葉で書いてください）` : "", history ? `これまでの会話:\n${history}` : "", `ユーザー: ${q}`];
+  return { instructions, prompt: data || history ? parts.filter(Boolean).join("\n\n") : q };
 }
 
 /**

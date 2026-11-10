@@ -1161,12 +1161,21 @@ export async function nativeWhy(modelId: string): Promise<string> {
   try { return appleWhy((await p.info({ files: [] })).apple); } catch { return ""; }
 }
 
+/** The page says, before asking, whether the question is about ひび手帳's records or anything else (相談・一般の質問). */
+const talk = { general: false };
+export function setGeneralTalk(on: boolean): void { talk.general = on; }
+
 export function createHibiAI(src: HibiSource): PersonalAI & { hibiRoutes(question: string): boolean } {
   const adapter = defineAdapter({
     appId: APP_ID,
     appName: "ひび手帳",
     getSystemPrompt: () =>
-      "あなたは手帳アプリ「ひび手帳」のアシスタント「まいにち」です。日本語で、やさしく簡潔に答えてください。" +
+      talk.general
+        ? "あなたは手帳アプリ「ひび手帳」についているアシスタント「まいにち」です。日本語で、やさしく自然に答えてください。" +
+          "ひび手帳のことだけでなく、相談・勉強・身の回りの質問など、なんでも答えます。悩みや気持ちの話には、まず気持ちを受け止めてから答えてください。" +
+          "分からないことや自信のないことは、そう伝えてください。作り話はしないでください。" +
+          (src.ready() && src.more().name ? `ユーザーの名前は「${src.more().name}」です。` : "")
+        : "あなたは手帳アプリ「ひび手帳」のアシスタント「まいにち」です。日本語で、やさしく簡潔に答えてください。" +
       "予定・日記・やることについては、渡された記録だけを根拠にし、記録にないことは「記録にはありません」と答えてください。" +
       "予定の追加は、ツールを使って頼まれたときだけ行います。予定の変更や削除はできないので、ひび手帳で行うよう伝えてください。" +
       "金額・回数・日付などの数は、渡された記録にあるものだけを使い、計算したり作ったりしないでください。記録から分からないときは、そう伝えて、家計簿なら「4月から10月の外食費はいくら？」のように聞き直してもらってください。" +

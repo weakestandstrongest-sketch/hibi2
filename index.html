@@ -1107,6 +1107,9 @@ const FOLLOW_WORDS = /今日|きょう|明日|あした|昨日|きのう|明後�
 const SMALL_TALK = /^(こんにちは|こんばんは|おはよう|おやすみ|ありがと|どうも|よろしく|はじめまして|やあ|ハロー|hello|hi|hey|おつかれ|お疲れ|おつ|つかれ|疲れ|ねむ|眠|だる|しんど|いえ[ーい]|イエ[ーイ]|やった|わーい|うれし|嬉し|たのし|楽し|かなし|悲し|さみし|寂し|ひま|暇|げんき|元気|すご|えらい|がんば|頑張|ただいま|いってき|行ってき|おなか|お腹|はら(へ|減)|腹減|笑|草|w+$|ｗ+$|ok|おけ|了解|りょ|なるほど|そうなんだ|うん|はい|いいね|最高|さいこう)/i;
 const RECORD_WORDS = /予定|日記|やること|課題|締め?切|お金|円|家計|支出|収入|いつ|何回|何時|どこ|天気|ニュース|野球|試合|経路|電車|のりかえ|乗換|習慣|灯|出席|授業|メモ|場所|写真|追加|教えて|ふりかえ|振り返|先週|来週|明日|昨日|今週|今月|先月|[0-9０-９]/;
 const isSmallTalk = q => { const t = String(q).replace(/[\s　！!。、,.?？〜~…ー♪☆★♡❤️😊😆🎉]+$/u, '').trim(); return t.length <= 20 && !RECORD_WORDS.test(t) && SMALL_TALK.test(t.replace(/^(今日|きょう|今|いま|もう|めっちゃ|超|すごく|とても|ほんと|本当)(は|に|も)?/, '')); };
+// is this about the person's own records (予定・日記・家計簿…)? Everything else (「最近恋愛に疲れた」「光合成って何？」) is
+// talked about as an ordinary assistant, without ひび手帳's records (a model handed unrelated records read them back as the answer)
+const ABOUT_ME = /予定|日記|やること|タスク|課題|締め?切|お金|円|家計|支出|収入|使った|貯金|予算|いつ|何回|何時|どこ(に|へ)?行|天気|ニュース|野球|試合|経路|電車|のりかえ|乗換|習慣|出席|授業|時間割|バイト|シフト|給料|メモ|場所|写真|追加|入れて|ふりかえ|振り返|先週|来週|明日|昨日|今週|今月|先月|来月|去年|今年|今日|きょう|最近(の|何|どう)|(私|わたし|僕|ぼく|俺|おれ|自分)の|記録|気分|曲|行った|会った|した日|[0-9０-９]+\s*(月|日|時)/;
 const isFollowUp = q => q.length <= 30 && /[0-9０-９]|今日|きょう|明日|あした|昨日|きのう|明後日|あさって|一昨日|おととい|週|月|年|曜/.test(q) && q.replace(FOLLOW_WORDS, '').length <= 1 && !/日記|メモ|記事|ニュース|天気|場所|曲|気持ち|予定を|追加|入れて/.test(q);
 const SUGG = ['今日の予定は？', '次の予定は？', '明日の予定は？', '今日の空き時間は？', 'やることは？', '明日15時から17時までバイトを追加して', '名古屋から岐阜までの経路を調べて', '今日のニュースは？', '今日の天気は？', '先週の日記をふりかえって'];
 // the AI model chosen in 設定 → AIのモデル (the first of the list when nothing is chosen)
@@ -1186,12 +1189,12 @@ function aiCardHTML() {
   const c = aiCheck();
   if (AIV.model && AIV.model.backend === 'native') {
     const apple = AIV.model.id === 'native/apple-intelligence';
-    return `<div class="ai-card">${ico('sparkle')}<div style="min-width:0"><b>ひび手帳のことを、AIと話せます</b>
+    return `<div class="ai-card">${ico('sparkle')}<div style="min-width:0"><b>ひび手帳のことも、それ以外のことも、AIと話せます</b>
     <p>予定・次の予定・空き時間・やることは、このまま聞けます。日記のふりかえりなど、ほかの質問には AI（${esc(AIV.model.name)}）が答えます。${apple ? 'iPhoneに入っているAppleのモデルなので、ダウンロードはいりません。' : `はじめてのときだけ、モデル（${esc(aiPick().size || '')}）をダウンロードします。`}AIはiPhoneの中だけで動き、ひび手帳のデータを外へ送りません。モデルは 設定 → AIのモデル で変えられます。</p>
     ${AIV.notice ? `<p style="color:var(--sun)">${esc(AIV.notice)}</p>` : ''}${AIV.err ? `<p style="color:var(--sun)">${esc(AIV.err)}</p>` : ''}
     ${c.ok ? `<button class="btn primary" data-act="aiLoad">${apple ? 'AIを使う' : 'AIを準備する（Wi-Fiがおすすめ）'}</button>` : `<p style="color:var(--sun)">${esc(c.why)}</p>`}</div></div>`;
   }
-  return `<div class="ai-card">${ico('sparkle')}<div style="min-width:0"><b>ひび手帳のことを、AIと話せます</b>
+  return `<div class="ai-card">${ico('sparkle')}<div style="min-width:0"><b>ひび手帳のことも、それ以外のことも、AIと話せます</b>
     <p>予定・次の予定・空き時間・やることは、このまま聞けます。日記のふりかえりなど、ほかの質問に答えるには、AI（${esc(AIV.model ? AIV.model.name : 'Qwen2.5 1.5B')}・${esc(aiPick().size || '約1GB')}）を一度ダウンロードします。AIは端末の中だけで動き、ひび手帳のデータを外へ送りません。</p>
     ${AIV.notice ? `<p style="color:var(--sun)">${esc(AIV.notice)}</p>` : ''}${AIV.err ? `<p style="color:var(--sun)">${esc(AIV.err)}</p>` : ''}
     ${c.ok ? '<button class="btn primary" data-act="aiLoad">AIを準備する（Wi-Fiがおすすめ）</button>'
@@ -1245,16 +1248,16 @@ function aiPaintMsgs(stick) {
 function aiOpen() {
   const el = $('#ai');
   if (!el.firstChild) {
-    el.innerHTML = `<div class="hd"><div><div class="d">ひび手帳のことを聞けます</div><h1>AI</h1></div>
+    el.innerHTML = `<div class="hd"><div><div class="d">ひび手帳のことも、それ以外のことも聞けます</div><h1>AI</h1></div>
       <div class="hd-btns">${icoBtn('aiNew', 'plus', '新しい会話')}${icoBtn('settings', 'gear', '設定')}</div></div>
       <div id="ai-card"></div>
       <div class="sugg" id="ai-sugg">${SUGG.map(q => `<button data-act="aiAsk" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>
       <div class="msgs" id="ai-msgs"></div>
-      <div class="composer"><form id="ai-form"><textarea id="ai-q" rows="1" placeholder="ひび手帳のことを聞く" enterkeyhint="send"></textarea><button class="send" id="ai-send" type="submit" aria-label="送る">${ico('up')}</button></form></div>`;
+      <div class="composer"><form id="ai-form"><textarea id="ai-q" rows="1" placeholder="なんでも聞く" enterkeyhint="send"></textarea><button class="send" id="ai-send" type="submit" aria-label="送る">${ico('up')}</button></form></div>`;
     const q = $('#ai-q');
     q.addEventListener('input', () => { q.style.height = 'auto'; q.style.height = Math.min(120, q.scrollHeight) + 'px'; });
     q.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('#ai-form').requestSubmit(); } });
-    $('#ai-form').addEventListener('submit', e => { e.preventDefault(); if (AIV.busy) { if (AIV.engine) AIV.engine.stop(); return; } const v = q.value.trim(); if (!v) return; q.value = ''; q.style.height = 'auto'; aiAsk(v); });
+    $('#ai-form').addEventListener('submit', e => { e.preventDefault(); if (AIV.busy) { AIV.stopReq = true; if (AIV.engine) AIV.engine.stop(); return; } const v = q.value.trim(); if (!v) return; q.value = ''; q.style.height = 'auto'; aiAsk(v); });
   }
   aiPaintCard(); aiPaintMsgs(true);
   aiBoot().then(() => { aiPaintCard(); aiPaintMsgs(true); }, () => aiPaintCard());
@@ -1262,7 +1265,7 @@ function aiOpen() {
 const TOOL_JA = { hibi_news: '凪から取ってきました', hibi_baseball: '野球速報から取ってきました', hibi_weather: '天気を調べました', hibi_route: 'のりかえで調べました', hibi_route_change: 'のりかえで経路を変えました', hibi_add_event: 'ひび手帳への追加', hibi_money: '家計簿を計算しました', hibi_habits: '習慣の記録を数えました', hibi_attendance: '出席を数えました', hibi_schedule: '予定を確認しました', hibi_next: '次の予定を確認しました', hibi_free_time: '空き時間を計算しました', hibi_todos: 'やることを確認しました' };
 async function aiAsk(q) {
   if (AIV.busy) return;
-  AIV.busy = true;
+  AIV.busy = true; AIV.stopReq = false;
   const me = { who: 'me', text: q }, a = { who: 'ai', text: '', wait: true };
   AIV.msgs.push(me, a); aiPaintMsgs(true);
   try {
@@ -1272,13 +1275,14 @@ async function aiAsk(q) {
     // ひび手帳's exact tools answered (its own period first), instead of letting the small model guess the numbers
     // (not when the follow-up brings its own subject: 「昨日の日記は？」 is a new question, not a follow-up)
     let ask = q;
-    const chat = isSmallTalk(q);
+    const chat = isSmallTalk(q) || (!ABOUT_ME.test(q) && !e.hibiRoutes(q) && !(AIV.base && isFollowUp(q)));
     if (chat) { /* a greeting: no records, no follow-up */ }
     else if (e.hibiRoutes(q)) AIV.base = q;
     // and only when it is about nothing but a period: 「あ、4月から10月ね」「じゃあ先月は？」「6月だと？」「明日は？」
     // (「今日のニュースは？」「ありがとう」are new questions, not follow-ups)
     else if (AIV.base && isFollowUp(q)) { const c = q + AIV.mod.FOLLOW + AIV.base; if (e.hibiRoutes(c)) ask = c; }
-    // always look through ひび手帳's records (the engine's own guess of 'is this about my records?' misses 習慣・家計簿・場所…)
+    // about ひび手帳: always look through its records (the engine's own guess of 'is this about my records?' misses 習慣・家計簿・場所…)
+    if (AIV.mod.setGeneralTalk) AIV.mod.setGeneralTalk(chat && !isSmallTalk(q));
     for await (const ev of e.streamEvents(ask, { useMemory: !chat, confirmTool: call => aiConfirm(a, call) })) {
       if (ev.type === 'tool_call') a.tool = TOOL_JA[ev.call.name] || 'ひび手帳を調べました';
       else if (ev.type === 'sources') a.src = ev.citations.slice(0, 6).map(c => `${md(c.date)} ${c.type === 'diary' ? '日記' : c.type === 'event' ? '予定' : c.type === 'task' ? 'やること' : 'メモ'}`);
@@ -1288,7 +1292,7 @@ async function aiAsk(q) {
       else if (ev.type === 'tool_result' && /^hibi_route/.test(ev.result.name) && ev.result.ok) { AIV.rt = ev.result.value; AIV.rtSel = 0; lsSet('mainichi.rt', AIV.rt); a.rt = ev.result.value; a.rtAdded = []; }
       aiPaintMsgs(true);
     }
-    if (!a.text) { a.wait = false; a.text = '（止めました）'; }
+    if (!a.text) { a.wait = false; a.text = AIV.stopReq ? '（止めました）' : '（うまく答えられませんでした。聞き方を変えるか、設定 → AIのモデル でほかのモデルを試してください）'; }
   } catch (err) {
     a.wait = false; a.err = true; a.src = [];
     a.text = err && err.code === 'NO_DATA' ? 'ひび手帳のデータがまだ読み込まれていません。「今日」の画面で Google にログインしてください。'
