@@ -1066,7 +1066,9 @@ const hibiSource = {
     const b = norikaeBase(); if (!b) throw new Error('乗換案内のURLが設定されていません（設定で入れられます）');
     const ac = new AbortController(), to = setTimeout(() => ac.abort(), 20000);
     try {
-      const r = await fetch(`${b}${path}?${new URLSearchParams(params)}`, { signal: ac.signal }), j = await r.json().catch(() => ({}));
+      // a list (several stations to go through) becomes the same key several times: via=名古屋&via=名鉄名古屋
+      const sp = new URLSearchParams(); for (const [k, v] of Object.entries(params)) for (const x of [].concat(v)) sp.append(k, x);
+      const r = await fetch(`${b}${path}?${sp}`, { signal: ac.signal }), j = await r.json().catch(() => ({}));
       if (!r.ok || (j.error && !(Array.isArray(j.routes) && j.routes.length))) throw new Error(j.error || `のりかえに接続できませんでした（${r.status}）`);
       return j;
     } catch (e) { throw new Error(e.name === 'AbortError' ? 'のりかえの応答がありませんでした' : e.message || 'のりかえに接続できませんでした'); }

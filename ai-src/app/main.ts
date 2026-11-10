@@ -78,7 +78,7 @@ export interface HibiSource {
    */
   addEvent(e: NewEvent): Promise<NewEvent>;
   /** のりかえ（乗換案内）の API を呼ぶ：/api/search・/api/timetable・/api/train */
-  nk(path: string, params: Record<string, string>): Promise<any>;
+  nk(path: string, params: Record<string, string | string[]>): Promise<any>;
   /** よそのデータを JSON で取ってくる（凪・野球速報・天気） */
   fetchJSON(url: string): Promise<any>;
   /** ひび手帳の設定にある、凪・野球速報の URL */
@@ -415,6 +415,7 @@ function takeDay(q0: string, t: string): { date: string; q: string } | undefined
   }
   return { date, q };
 }
+const clean0 = (x: string) => x.replace(/^(に|で|は|を|の|、|という|経路)+/, "").replace(/(という|って)$/, "").trim();
 /** 「11月9日に、繰舟橋から刈谷市駅へ16時につきたい、経路を調べて」 → { from: 繰舟橋, to: 刈谷市, date, time: 16:00, type: arr } */
 export function parseRouteAsk(question: string, ctx: ToolContext): RouteQuery | undefined {
   const q0 = question.normalize("NFKC");
@@ -431,8 +432,19 @@ export function parseRouteAsk(question: string, ctx: ToolContext): RouteQuery | 
     return " ";
   });
   if (/着きたい|つきたい|到着したい|に着く|につく|までに/.test(q0) && type === "dep" && time) type = "arr";
-  const via = (q.match(/([^\s、。,，「」]+?)(?:駅)?経由/) ?? [])[1] ?? "";
+  let via = (q.match(/([^\s、。,，「」]+?)(?:駅)?経由/) ?? [])[1] ?? "";
   q = q.replace(/([^\s、。,，「」]+?)(?:駅)?経由(で|して)?/, " ");
+  const legs = [...q.matchAll(/([^\s、。,，「」()（）]+?)(?:駅)?から\s*([^\s、。,，「」()（）]+?)(?:駅)?(?=まで|へ|、|,|，|という|って|の経路|で|に|$)/g)].map((x) => [clean0(x[1]!), clean0(x[2]!)] as const);
+  if (legs.length >= 2) {
+    const stops = [legs[0]![0], ...legs.map((l) => l[1])];
+    const from = stops[0]!, to = stops[stops.length - 1]!, mids = stops.slice(1, -1).filter((x, k, a) => x && a.indexOf(x) === k && x !== from && x !== to).slice(0, 3);
+    if (from && to && from !== to && from.length <= 30 && to.length <= 30) {
+      via = [...(via ? [via] : []), ...mids].slice(0, 3).join("・");
+      const date = d.date;
+      if (!time) { if (date === t) { const n = nowMin(ctx); time = hm2(n); } else time = "09:00"; }
+      return { from, to, date, time, type, via, shin: !/新幹線(は|を)?(使わ|なし|乗らない|以外)/.test(q0), ex: !/特急(は|を)?(使わ|なし|乗らない|以外)/.test(q0) };
+    }
+  }
   const m = q.match(/([^\s、。,，「」()（）]+?)(?:駅)?から\s*([^\s、。,，「」()（）]+?)(?:駅)?(?:まで|へ|に|行|の|$)/);
   if (!m) return undefined;
   const clean = (x: string) => x.replace(/^(に|で|は|を|の|、)+/, "").trim();
@@ -455,7 +467,7 @@ function payloadOf(r: any, q: RouteQuery): RoutePayload {
     fare: Number.isFinite(+s.fare) && s.fare != null ? +s.fare : null, fareNote: s.fareNote || "", tags: Array.isArray(s.tags) ? s.tags : [], steps };
 }
 async function searchRoutes(src: HibiSource, q: RouteQuery): Promise<RoutePayload[]> {
-  const j = await src.nk("/api/search", { from: q.from, to: q.to, date: q.date, time: q.time, type: q.type, shin: q.shin ? "1" : "0", ex: q.ex ? "1" : "0", ...(q.via ? { via: q.via } : {}) });
+  const j = await src.nk("/api/search", { from: q.from, to: q.to, date: q.date, time: q.time, type: q.type, shin: q.shin ? "1" : "0", ex: q.ex ? "1" : "0", ...(q.via ? { via: q.via.split("・").filter(Boolean).slice(0, 3) } : {}) });
   return (Array.isArray(j?.routes) ? j.routes : []).map((r: any) => payloadOf(r, q)).filter((r: RoutePayload) => r.dep && r.arr && r.steps.length);
 }
 const lines = (r: RoutePayload) => r.steps.filter((x) => x.k === "a" && !x.walk).map((x) => (x as any).line).filter(Boolean);
@@ -463,6 +475,8 @@ export const routeLine = (r: RoutePayload, i?: number) =>
   `${i !== undefined ? `${"①②③④⑤⑥"[i] ?? i + 1} ` : ""}${hm(r.dep)}発 → ${hm(r.arr)}着（${[r.duration.replace(/\(.*\)$/, ""), r.transfers != null ? `乗換${r.transfers}回` : "", r.fare != null ? `${r.fareNote === "目安" ? "約" : ""}${r.fare.toLocaleString()}円` : ""].filter(Boolean).join("・")}）\n　${lines(r).join(" → ")}`;
 const late = (q: RouteQuery, r: RoutePayload) => (q.type === "arr" && minOf(r.arr) > minOf(q.time) && minOf(r.arr) - minOf(q.time) < 720 ? `\n※ ${hm(q.time)}には間に合いません（${hm(r.arr)}着）` : "");
 
+// shown under an answer found by the exact route search only: a model given these words repeated them back to the person
+const ROUTE_TIPS = "\n\n「ひび手帳に追加」で予定に入れられます。「名鉄名古屋から名鉄岐阜は普通にしたい」「特急は使わないで」「名古屋まではJRで」「1本あとで」のように話すと、経路を変えられます。";
 function routeSearchTool(src: HibiSource): AITool<RouteQuery & Record<string, unknown>, RouteResult> {
   return {
     name: "hibi_route",
@@ -473,12 +487,12 @@ function routeSearchTool(src: HibiSource): AITool<RouteQuery & Record<string, un
     parameters: { type: "object", properties: { from: { type: "string" }, to: { type: "string" }, date: { type: "string" }, time: { type: "string" }, type: { type: "string", enum: ["dep", "arr", "first", "last"] },
       shin: { type: "boolean", description: "新幹線を使うか" }, ex: { type: "boolean", description: "有料特急を使うか" }, via: { type: "string", description: "経由する駅" } }, required: ["from", "to"] },
     route(question, ctx) { return parseRouteAsk(question, ctx) as (RouteQuery & Record<string, unknown>) | undefined; },
-    formatAnswer(result) { return result.ok ? result.value.text : `経路を調べられませんでした（${result.error}）。`; },
+    formatAnswer(result) { return result.ok ? result.value.text + ROUTE_TIPS : `経路を調べられませんでした（${result.error}）。`; },
     async execute(q) {
       const routes = (await searchRoutes(src, q)).slice(0, 3);
       if (!routes.length) throw new Error("経路が見つかりませんでした。駅名を確かめてください");
       const head = `${dayJa(q.date)}、${q.from} → ${q.to}${q.via ? `（${q.via}経由）` : ""}、${q.type === "arr" ? `${hm(q.time)}に着く` : q.type === "last" ? "終電" : q.type === "first" ? "始発" : `${hm(q.time)}に出る`}経路です。`;
-      return { query: q, routes, text: `${head}\n${routes.map((r, i) => routeLine(r, i)).join("\n")}${late(q, routes[0]!)}\n\n「ひび手帳に追加」で予定に入れられます。「名鉄名古屋から名鉄岐阜は普通にしたい」「特急は使わないで」「1本あとで」のように話すと、経路を変えられます。` };
+      return { query: q, routes, text: `${head}\n${routes.map((r, i) => routeLine(r, i)).join("\n")}${late(q, routes[0]!)}` };
     },
   };
 }
@@ -498,7 +512,8 @@ function parseChange(q0: string, ctxR: { result: RouteResult; selected: number }
   if (/新幹線(は|を)?(使わ|なし|乗らない|以外|やめ)/.test(q)) return { mode: "noshin", i };
   if (/(1|一|ひと)本(あと|後|遅|おそ)|次の電車|遅らせ|もっと遅|ゆっくり出/.test(q)) return { mode: "later", i };
   if (/(1|一|ひと)本(前|早|はや)|もっと早|早めに/.test(q)) return { mode: "earlier", i };
-  const via = (q.match(/([^\s、。,，「」]+?)(?:駅)?経由/) ?? [])[1];
+  const via = (q.match(/([^\s、。,，「」]+?)(?:駅)?経由/) ?? [])[1]
+    ?? (q.match(/([^\s、。,，「」はまで]+?)(?:駅)?(?:まで|までは)\s*(?:は)?\s*(?:JR|名鉄|近鉄|地下鉄|私鉄|新幹線|在来線|あおなみ線|リニモ)[^\s、。]*(?:で|を|に)/) ?? [])[1];
   if (via) return { mode: "via", i, via };
   const km = q.match(KIND_RE);
   // a kind of train alone is not enough (「普通に楽しかった」): the train, the section or a station of the route must be talked about too
