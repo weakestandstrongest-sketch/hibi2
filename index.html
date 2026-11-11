@@ -279,6 +279,40 @@ html.in-frame #app,html.in-frame .page{padding-top:40px}
 .rtc .rt-steps .st .nm{font-size:14px;padding:8px 0}
 .rtc-b{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
 .rtc-b .btn{flex:1;min-width:0;margin:0;padding:10px;font-size:13px}
+/* 経路のカード（ie と同じ形） */
+.rtc.rx{padding:16px 14px 14px;border-radius:24px;background:var(--surface);box-shadow:0 1px 2px rgba(40,30,20,.04),0 6px 18px -8px rgba(40,30,20,.12)}
+.rtc.rx.sel{box-shadow:0 0 0 2px var(--accent)}
+.rx-eb{margin:0;font-size:13px;font-weight:700;color:var(--ink-2);display:flex;align-items:center;gap:6px}
+.rx-no{font-size:15px;color:var(--accent)}
+.rx-arr{margin:2px 0 0;font-size:48px;line-height:1;font-weight:800;letter-spacing:-.03em;font-variant-numeric:tabular-nums;color:var(--ink)}
+.rx-leave{margin:8px 0 0;font-size:14px;font-weight:700;color:var(--ink)}
+.rx-facts{display:flex;flex-wrap:wrap;gap:5px;list-style:none;margin:10px 0 0;padding:0}
+.rx-facts li{padding:4px 10px;border-radius:999px;background:var(--bg);font-size:12px;font-weight:600;color:var(--ink-2)}
+.rx-facts li b{color:var(--ink);font-weight:800}
+.rtc.rx details{margin-top:10px}
+.rtc.rx summary{list-style:none;cursor:pointer;color:var(--accent);font-weight:800;font-size:12.5px}
+.rtc.rx summary::-webkit-details-marker{display:none}
+.rtc.rx details[open] summary .o,.rtc.rx details:not([open]) summary .c{display:none}
+.rx-tl{list-style:none;margin:10px 0 0;padding:14px 10px 8px 0;border-radius:20px;background:var(--bg)}
+.rx-it,.rx-gap{display:grid;grid-template-columns:40px 40px minmax(0,1fr);column-gap:10px}
+.rx-t{display:flex;flex-direction:column;align-items:flex-end;padding-top:2px;font-size:12px;font-weight:800;color:var(--ink-2)}
+.rx-t .end{margin-top:auto;color:var(--ink-3, var(--ink-2));font-weight:700;opacity:.75}
+.rx-rail{display:flex;flex-direction:column;align-items:center}
+.rx-pill{display:flex;align-items:flex-start;justify-content:center;width:40px;min-height:40px;padding-top:9px;border-radius:20px;color:#fff;background:linear-gradient(180deg,color-mix(in srgb,var(--c) 78%,#fff),var(--c) 55%);flex:none}
+.rx-pill svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.rx-pill .solid{fill:currentColor;stroke:none}
+.rx-it.walk .rx-pill{background:color-mix(in srgb,var(--ink-2) 22%,var(--surface));color:var(--ink-2)}
+.rx-it.start .rx-pill{background:var(--ink);color:var(--surface)}
+.rx-tail,.rx-dots{flex:1;width:4px;min-height:6px;margin:3px 0;background:linear-gradient(to bottom,var(--from),var(--to));-webkit-mask:repeating-linear-gradient(to bottom,#000 0 5px,transparent 5px 9px);mask:repeating-linear-gradient(to bottom,#000 0 5px,transparent 5px 9px)}
+.rx-gap{min-height:24px}.rx-gap .rx-dots{grid-column:2;justify-self:center;margin:0}
+.rx-gap p{grid-column:3;align-self:center;margin:0;font-size:11.5px;font-weight:700;color:var(--ink-2);opacity:.8}
+.rx-bd{padding:1px 0 14px;min-width:0}
+.rx-ti{margin:0;font-size:14.5px;font-weight:800;line-height:1.35;color:var(--ink)}
+.rx-ti small{margin-left:5px;font-size:12px;font-weight:600;color:var(--ink-2)}
+.rx-sub{margin:2px 0 0;font-size:12px;color:var(--ink-2)}
+.rx-meta{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0 0;padding:0;list-style:none}
+.rx-meta li{padding:2px 7px;border-radius:7px;background:color-mix(in srgb,var(--c) 16%,transparent);font-size:11.5px;font-weight:700;color:var(--ink)}
+
 .msg .tool{display:block;font-size:11.5px;color:var(--ink-3);margin-bottom:4px}
 .composer{position:fixed;left:0;right:0;bottom:calc(max(10px,env(safe-area-inset-bottom)) + 70px);z-index:7;display:flex;justify-content:center;padding:0 12px;pointer-events:none}
 .composer form{pointer-events:auto;display:flex;align-items:flex-end;gap:8px;width:min(28rem,calc(100vw - 1.5rem));padding:6px 6px 6px 16px;border-radius:26px;
@@ -1221,18 +1255,54 @@ function confirmHTML(c) {
     <div class="cf-btns"><button class="btn primary" data-act="aiYes">追加する</button><button class="btn ghost" data-act="aiNo">やめる</button></div>
     <p>ひび手帳を開くと、ひび手帳の予定に入ります。</p></div>`;
 }
+// 経路：ie（家に帰るアプリ）と同じ形。大きな到着時刻と、路線の色のカプセルを点線でつなぐタイムライン
+const RX_IC = {
+  pin: '<svg viewBox="0 0 24 24"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></svg>',
+  walk: '<svg viewBox="0 0 24 24"><circle class="solid" cx="13" cy="4.2" r="1.9"/><path d="M9.5 21l2.2-6.2M11.7 14.8l2.6 2.4.9 3.8M8 11.4l2.4-3.2 3.4.6 1.4 3 2.6 1.2M10.4 8.2l1.3 6.6"/></svg>',
+  train: '<svg viewBox="0 0 24 24"><rect x="5.5" y="3.5" width="13" height="14" rx="4"/><path d="M5.5 10.5h13M9 14.3h.01M15 14.3h.01M8.5 21l1.8-3.5M15.5 21l-1.8-3.5"/></svg>',
+  bus: '<svg viewBox="0 0 24 24"><rect x="4.5" y="3.5" width="15" height="14" rx="3"/><path d="M4.5 11h15M8.2 14.5h.01M15.8 14.5h.01M7.5 17.5V20M16.5 17.5V20"/></svg>',
+  flag: '<svg viewBox="0 0 24 24"><path d="M6 21V4"/><path class="solid" d="M6 4.5h11.5l-2.6 4 2.6 4H6z"/></svg>',
+};
+const rxMin = t => { const m = /^(\d{1,2}):(\d{2})/.exec(t || ''); return m ? +m[1] * 60 + +m[2] : null; };
+const rxDiff = (a, b) => { const x = rxMin(a), y = rxMin(b); if (x == null || y == null) return null; let d = y - x; if (d < -600) d += 1440; return d; };
+const rxCol = c => /^#[0-9a-f]{3,8}$/i.test(c || '') ? c : '';
+const rxMix = (a, b) => `color-mix(in srgb, ${a} 50%, ${b})`;
+function rxTimeline(r) {
+  const st = r.steps || [], last = st.length - 1, items = []; let note = '';
+  st.forEach((x, i) => {
+    if (x.k === 's') {
+      if (i === 0) items.push({ type: 'start', time: x.dep, title: x.name, sub: '出発', note });
+      else if (i === last) items.push({ type: 'end', time: x.arr, title: x.name, sub: '到着', note });
+      else { const w = rxDiff(x.arr, x.dep); note = `${x.name}で乗り換え${w > 0 ? ` · ${w}分待ち` : ''}`; return; }
+      note = ''; return;
+    }
+    const pv = st[i - 1] || {}, nx = st[i + 1] || {}, min = rxDiff(pv.dep, nx.arr);
+    if (x.walk) { items.push({ type: 'walk', time: pv.dep, title: min != null ? `歩く ${min}分` : '歩く', sub: '', note }); note = ''; return; }
+    items.push({ type: 'ride', time: pv.dep, end: nx.arr, min, color: rxCol(x.color), icon: /バス/.test(x.line || '') ? 'bus' : 'train', title: x.line, small: x.dest, sub: `${pv.name || ''} → ${nx.name || ''}`, meta: [min != null ? `${min}分` : '', (String(x.platform || '').match(/\[発\]\s*([^\s→]+)/) || [])[1] || '', x.stops || ''].filter(Boolean), note });
+    note = '';
+  });
+  const C = { start: 'var(--ink)', walk: 'color-mix(in srgb, var(--ink-2) 25%, var(--surface))', end: 'var(--accent)', ride: 'var(--accent)' };
+  const rideC = (f, d) => { for (let j = f; j >= 0 && j < items.length; j += d) if (items[j].type === 'ride') return items[j].color || C.ride; return null; };
+  items.forEach((it, k) => { it.c = it.color || C[it.type]; if (it.type === 'ride' || it.type === 'end') it.lc = it.c; else { const b = rideC(k - 1, -1), a = rideC(k + 1, 1) || C.end; it.lc = b ? rxMix(b, a) : a; } });
+  return `<ol class="rx-tl">${items.map((it, k) => {
+    const nx = items[k + 1], h = it.type === 'ride' && it.min != null ? Math.max(64, Math.min(150, 36 + it.min * 2.6)) : 42;
+    const gap = k > 0 ? `<li class="rx-gap"><span></span><span class="rx-dots" style="--from:${rxMix(items[k - 1].lc, it.lc)};--to:${it.lc}"></span>${it.note ? `<p>${esc(it.note)}</p>` : ''}</li>` : '';
+    return gap + `<li class="rx-it ${it.type}" style="--c:${it.c}">
+      <div class="rx-t num" style="height:${h}px"><span>${esc(it.time || '')}</span>${it.end && it.type === 'ride' ? `<span class="end">${esc(it.end)}</span>` : ''}</div>
+      <div class="rx-rail"><span class="rx-pill" style="height:${h}px">${RX_IC[it.type === 'ride' ? it.icon : it.type === 'start' ? 'pin' : it.type === 'end' ? 'flag' : 'walk']}</span>${nx ? `<span class="rx-tail" style="--from:${it.lc};--to:${rxMix(it.lc, nx.lc)}"></span>` : ''}</div>
+      <div class="rx-bd"><p class="rx-ti">${esc(it.title || '')}${it.small ? `<small>${esc(it.small)}</small>` : ''}</p>${it.sub ? `<p class="rx-sub">${esc(it.sub)}</p>` : ''}${it.meta && it.meta.length ? `<ul class="rx-meta">${it.meta.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}</div></li>`;
+  }).join('')}</ol>`;
+}
 function routeCardHTML(m, mi, r, i) {
   const sel = AIV.rt === m.rt && (AIV.rtSel || 0) === i && m.rt.routes.length > 1, added = (m.rtAdded || []).includes(i);
-  const rides = r.steps.filter(x => x.k === 'a');
-  const sts = r.steps.filter(x => x.k === 's');
-  const steps = r.steps.map(x => x.k === 's'
-    ? `<li class="st${x === sts[0] ? ' first' : x === sts[sts.length - 1] ? ' last' : ''}"><span class="t num">${x.arr ? `<span>${esc(x.arr)}着</span>` : ''}${x.dep ? `<b>${esc(x.dep)}発</b>` : ''}</span><span class="mk"></span><span class="nm">${esc(x.name)}</span></li>`
-    : `<li class="ac${x.walk ? ' walk' : ''}" style="${/^#[0-9a-f]{3,8}$/i.test(x.color) ? `--c:${x.color}` : ''}"><span class="t"></span><span class="mk"></span><div class="bd"><div class="ln">${esc(x.line)}${x.dest ? ` <span style="font-weight:500;color:var(--ink-2)">${esc(x.dest)}</span>` : ''}</div>${[x.platform, x.stops].filter(Boolean).map(esc).join(' ・ ')}</div></li>`).join('');
-  return `<div class="rtc${sel ? ' sel' : ''}">
-    <div class="rtc-h"><b class="num">${m.rt.routes.length > 1 ? '①②③④⑤⑥'[i] + ' ' : ''}${esc(hm(r.dep))} → ${esc(hm(r.arr))}</b>${(r.tags || []).map(t => `<i class="tg-${esc(t)}">${esc(t)}</i>`).join('')}</div>
-    <div class="rtc-m num">${[esc(String(r.duration || '').replace(/\(.*\)$/, '')), r.transfers != null ? `乗換${r.transfers}回` : '', r.fare != null ? `${r.fareNote === '目安' ? '約' : ''}${Number(r.fare).toLocaleString()}円` : ''].filter(Boolean).join('・')}</div>
-    <div class="rtc-l">${rides.filter(x => !x.walk).map(x => `<span style="--c:${/^#[0-9a-f]{3,8}$/i.test(x.color) ? x.color : 'var(--accent)'}">${esc(x.line)}</span>`).join('')}</div>
-    <details><summary>駅と電車を見る</summary><ol class="rt-steps">${steps}</ol></details>
+  const sts = (r.steps || []).filter(x => x.k === 's'), to = sts.length ? sts[sts.length - 1].name : '';
+  const facts = [String(r.duration || '').replace(/\(.*\)$/, ''), r.fare != null ? `${r.fareNote === '目安' ? '約' : ''}¥${Number(r.fare).toLocaleString()}` : '', r.transfers != null ? (r.transfers ? `乗換${r.transfers}回` : '乗換なし') : '', (r.tags || []).join('・')].filter(Boolean);
+  return `<div class="rtc rx${sel ? ' sel' : ''}">
+    <p class="rx-eb">${m.rt.routes.length > 1 ? `<span class="rx-no">${'①②③④⑤⑥'[i]}</span>` : ''}${esc(to)}に着くのは</p>
+    <p class="rx-arr num">${esc(hm(r.arr))}</p>
+    <p class="rx-leave">${esc(hm(r.dep))} に出発</p>
+    <ul class="rx-facts">${facts.map(f => `<li><b>${esc(f)}</b></li>`).join('')}</ul>
+    <details ${i === 0 ? 'open' : ''}><summary><span class="o">経路を見る</span><span class="c">経路を閉じる</span></summary>${rxTimeline(r)}</details>
     <div class="rtc-b"><button class="btn ${added ? 'ghost' : 'primary'}" data-act="rtAdd" data-m="${mi}" data-i="${i}" ${added ? 'disabled' : ''}>${added ? '追加しました（ひび手帳を開くと入ります）' : 'ひび手帳に追加'}</button>${m.rt.routes.length > 1 ? `<button class="btn ghost" data-act="rtSel" data-m="${mi}" data-i="${i}">${sel ? 'この経路で話しています' : 'この経路で話す'}</button>` : ''}</div></div>`;
 }
 // the answer's own list of routes is shown as cards instead
