@@ -279,6 +279,7 @@ html.in-frame #app,html.in-frame .page{padding-top:40px}
 .rtc .rt-steps .st .nm{font-size:14px;padding:8px 0}
 .rtc-b{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
 .rtc-b .btn{flex:1;min-width:0;margin:0;padding:10px;font-size:13px}
+
 /* 経路のカード（ie と同じ形） */
 .rtc.rx{padding:16px 14px 14px;border-radius:24px;background:var(--surface);box-shadow:0 1px 2px rgba(40,30,20,.04),0 6px 18px -8px rgba(40,30,20,.12)}
 .rtc.rx.sel{box-shadow:0 0 0 2px var(--accent)}
@@ -312,6 +313,22 @@ html.in-frame #app,html.in-frame .page{padding-top:40px}
 .rx-sub{margin:2px 0 0;font-size:12px;color:var(--ink-2)}
 .rx-meta{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0 0;padding:0;list-style:none}
 .rx-meta li{padding:2px 7px;border-radius:7px;background:color-mix(in srgb,var(--c) 16%,transparent);font-size:11.5px;font-weight:700;color:var(--ink)}
+/* AI：ChatGPT のように。ダークでは真っ黒の背景、自分のことばは青いふきだしに白、AI の答えはふきだしなしで白。
+   経路は、のりかえと同じく、背景の上に浮いたカード */
+.ai-hd>div:first-child{min-width:0;flex:1}
+.ai-hd .d{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}
+.msg.ai{background:transparent;box-shadow:none;padding:4px 2px;max-width:100%;border-radius:0}
+.msg.me{background:var(--accent);color:#fff;border-radius:22px;border-bottom-right-radius:22px;padding:10px 16px}
+.msg.rt{width:100%;max-width:100%}
+.msg.asking{background:var(--surface);border-radius:20px;padding:12px 14px}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) body:has(#ai:not([hidden])){background:#000}:root:not([data-theme="light"]) #ai .msg.ai{color:#fff}}
+:root[data-theme="dark"] body:has(#ai:not([hidden])){background:#000}
+:root[data-theme="dark"] #ai .msg.ai{color:#fff}
+.rtc.rx{background:transparent;box-shadow:none;padding:6px 0 4px;margin-top:14px}
+.rtc.rx.sel .rx-tl{box-shadow:0 0 0 2px var(--accent),0 6px 18px -8px rgba(0,0,0,.4)}
+.rtc.rx+.rtc.rx{margin-top:26px;padding-top:20px;border-top:1px solid var(--line)}
+.rx-facts li{background:var(--surface)}
+.rx-tl{background:var(--surface);border-radius:24px;padding:16px 12px 10px 0;box-shadow:0 1px 2px rgba(40,30,20,.04),0 6px 18px -8px rgba(40,30,20,.14)}
 
 .msg .tool{display:block;font-size:11.5px;color:var(--ink-3);margin-bottom:4px}
 .composer{position:fixed;left:0;right:0;bottom:calc(max(10px,env(safe-area-inset-bottom)) + 70px);z-index:7;display:flex;justify-content:center;padding:0 12px;pointer-events:none}
@@ -1318,7 +1335,7 @@ function aiPaintMsgs(stick) {
 function aiOpen() {
   const el = $('#ai');
   if (!el.firstChild) {
-    el.innerHTML = `<div class="hd"><div><div class="d">ひび手帳のことも、それ以外のことも聞けます</div><h1>AI</h1></div>
+    el.innerHTML = `<div class="hd ai-hd"><div><div class="d">ひび手帳のことも、それ以外も聞けます</div><h1>AI</h1></div>
       <div class="hd-btns">${icoBtn('aiNew', 'plus', '新しい会話')}${icoBtn('settings', 'gear', '設定')}</div></div>
       <div id="ai-card"></div>
       <div class="sugg" id="ai-sugg">${SUGG.map(q => `<button data-act="aiAsk" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>
