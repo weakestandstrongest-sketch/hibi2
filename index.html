@@ -337,6 +337,7 @@ html.in-frame #app,html.in-frame .page{padding-top:40px}
 .rtc.rx details{margin-top:14px}
 .rtc.rx .rtc-b{margin-top:16px}
 .rtc.rx+.rtc.rx{margin-top:34px;padding-top:30px}
+.rx-range{font-size:40px;display:flex;align-items:baseline;flex-wrap:wrap;gap:0 8px}.rx-range .arw{font-size:.6em;color:var(--ink-3);font-weight:700}
 
 
 .msg .tool{display:block;font-size:11.5px;color:var(--ink-3);margin-bottom:4px}
@@ -1324,9 +1325,8 @@ function routeCardHTML(m, mi, r, i) {
   const sts = (r.steps || []).filter(x => x.k === 's'), to = sts.length ? sts[sts.length - 1].name : '';
   const facts = [String(r.duration || '').replace(/\(.*\)$/, ''), r.fare != null ? `${r.fareNote === '目安' ? '約' : ''}¥${Number(r.fare).toLocaleString()}` : '', r.transfers != null ? (r.transfers ? `乗換${r.transfers}回` : '乗換なし') : '', (r.tags || []).join('・')].filter(Boolean);
   return `<div class="rtc rx${sel ? ' sel' : ''}">
-    <p class="rx-eb">${m.rt.routes.length > 1 ? `<span class="rx-no">${'①②③④⑤⑥'[i]}</span>` : ''}${esc(to)}に着くのは</p>
-    <p class="rx-arr num">${esc(hm(r.arr))}</p>
-    <p class="rx-leave">${esc(hm(r.dep))} に出発</p>
+    <p class="rx-eb">${m.rt.routes.length > 1 ? `<span class="rx-no">${'①②③④⑤⑥'[i]}</span>` : ''}${esc(sts.length ? sts[0].name : '')} → ${esc(to)}</p>
+    <p class="rx-arr rx-range num">${esc(hm(r.dep))}<span class="arw">→</span>${esc(hm(r.arr))}</p>
     <ul class="rx-facts">${facts.map(f => `<li><b>${esc(f)}</b></li>`).join('')}</ul>
     <details ${i === 0 ? 'open' : ''}><summary><span class="o">経路を見る</span><span class="c">経路を閉じる</span></summary>${rxTimeline(r)}</details>
     <div class="rtc-b"><button class="btn ${added ? 'ghost' : 'primary'}" data-act="rtAdd" data-m="${mi}" data-i="${i}" ${added ? 'disabled' : ''}>${added ? '追加しました（ひび手帳を開くと入ります）' : 'ひび手帳に追加'}</button>${m.rt.routes.length > 1 ? `<button class="btn ghost" data-act="rtSel" data-m="${mi}" data-i="${i}">${sel ? 'この経路で話しています' : 'この経路で話す'}</button>` : ''}</div></div>`;
